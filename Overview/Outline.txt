@@ -1,0 +1,32 @@
+Repo is a centralized code based for the TTRPG game made in Unreal, aiming to be a steam game
+
+Inspiration
+    Improvement on web based TTRPG services such as Roll 20 and DND Beyond.  Both are clunky and limited in their tool set, causing issues for both players and DMs
+    Players need easier access to their sheet for rolls, ideally customizable sheets that could be modified by DM or by player.  Roll 20 is closer to good for this, but restricted to DND, so it should be more open.  Players need individual and centralized tool systems and support for player inventory, a trouble in all TTRPG
+    DMs need a very wide access of tools that are restricted on both ends.  They need ways to see what players see, quickly and easily move players, and ways to make scripts or marcos to speed up the process
+
+Pillars
+    DM Ownership
+        Only DM Purchase of product
+            No subs
+            Lobby of Settable size
+            Maybe free companion app/version
+        Allow user permissions
+        Peer to Peer with minimal support to allow asynchronous changes for Players
+    Scriptable
+        At Personal Level, Session Level, Token/Item Level
+        Easy to pull properties from self/target for operations
+    Transferable
+        Easy to transfer data from different games
+        Easy to import external sources
+    Customizable/Moddable
+        Different TTRPG have different mechanics
+        External tools (Steam Workshop) should be accessible
+        Tools for DMs/Players should be atomic and configurable modules with base ones (like dice rolling) available as needed
+            Dice rolling
+            Inventory
+            Party Tools
+            Combat Tracker
+            Timers
+            Map + Token
+                Map events
