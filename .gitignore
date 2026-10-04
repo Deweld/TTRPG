@@ -1,0 +1,18 @@
+# Unreal outputs; authored content remains visible to Git.
+**/Binaries/
+**/Intermediate/
+**/DerivedDataCache/
+**/Saved/
+.vs/
+*.sln
+*.slnx
+*.suo
+*.VC.db
+*.VC.opendb
+
+# Machine-local settings, credentials, and player/campaign data.
+.local/
+.env
+.env.*
+!.env.example
+*.log

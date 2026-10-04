@@ -1,0 +1,12 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "TTRPG Core",
+  "Description": "System-neutral campaign state and offline change review.",
+  "Category": "Gameplay",
+  "CanContainContent": true,
+  "Modules": [
+    { "Name": "TTRPGCore", "Type": "Runtime", "LoadingPhase": "Default" }
+  ]
+}
