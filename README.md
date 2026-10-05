@@ -58,10 +58,14 @@ Read [the accepted direction](Docs/Product-Decisions.md),
 
 ## Current implementation
 
-`TTRPGCore` is a runtime plugin with an in-memory campaign change-review model
-and Unreal automation tests. It handles owned record edits, DM review policy,
-revision conflicts, atomic application, and duplicate submissions. It does not
-yet implement disk storage, networking, Steam, sheets UI, or a playable tabletop.
+The plugin includes the original in-memory campaign review model and a playable
+local top-down tabletop prototype. The prototype has DM/player views, a snapped
+grid, token/object placement, wall tools, pan/zoom, HP/dice controls, and local
+layout save/load. See [the prototype guide](Docs/Tabletop-Prototype.md) for launch
+instructions and controls.
+
+Networking, Steam, full sheets, campaign persistence, and the offline proposal
+UI remain future work. The local role switch is for testing, not authentication.
 
 Work takes place on development branches, with pull requests for review. The
 original `Overview/Outline.txt` is retained; newer accepted decisions are recorded

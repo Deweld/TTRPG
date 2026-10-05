@@ -35,3 +35,11 @@ The first three tasks establish the foundation; they do not constitute the
 playable milestone. Windows mouse/keyboard and direct/LAN sessions are the initial
 engineering defaults. Internet lobby integration and commercial entitlements
 follow after the session workflow is proven.
+
+## Local interface prototype
+
+At the owner's request, a [local tabletop prototype](Tabletop-Prototype.md) now
+exercises DM/player layouts, grid movement, token/object placement, wall editing,
+pan/zoom, HP/dice controls, and layout save/load. This brings forward interface
+work for hands-on testing. The multiplayer and campaign-level items above remain
+unchecked because the prototype does not satisfy their networked requirements.

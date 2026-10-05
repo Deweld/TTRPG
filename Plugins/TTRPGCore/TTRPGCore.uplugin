@@ -7,6 +7,8 @@
   "Category": "Gameplay",
   "CanContainContent": true,
   "Modules": [
-    { "Name": "TTRPGCore", "Type": "Runtime", "LoadingPhase": "Default" }
+    { "Name": "TTRPGCore", "Type": "Runtime", "LoadingPhase": "Default" },
+    { "Name": "TTRPGTabletop", "Type": "Runtime", "LoadingPhase": "Default" },
+    { "Name": "TTRPGTabletopEditor", "Type": "Editor", "LoadingPhase": "Default" }
   ]
 }
