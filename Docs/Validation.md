@@ -21,3 +21,26 @@ Headless automation likewise used approved execution outside the sandbox.
 These results validate the in-memory domain rules and integration with this
 host. They do not validate networking, disk persistence, a packaged game, UI,
 3D/VR presentation, or the full Milestone 1 acceptance scenario.
+
+## Local tabletop prototype
+
+Verified October 4, 2026 with the same UE 5.8.3 editor target:
+
+- Compiled the new `TTRPGTabletop` runtime and `TTRPGTabletopEditor` editor modules.
+- Generated the plugin's `TabletopPrototype.umap` and connected it as the host's
+  editor/game startup map, preserving the previous configuration in a local backup.
+- All 12 automation tests passed: the original 8 review tests plus 4 tabletop
+  tests for player permissions, grid/placement/stroke behavior, layout round-trip,
+  and invalid-save rejection without replacing current state.
+- Opened the native standalone Unreal window and inspected the DM/player
+  layouts, token rendering, placement, and save/load. Live visual checks caught
+  and fixed oversized token corner radii and missing cells in fast wall strokes.
+- Saved the owner's in-progress layout before restart and preserved a second
+  local copy. The save and backup hashes matched after testing. Personal layout
+  data is not committed.
+- Corrected the initial Slate keyboard focus target; no runtime errors appeared
+  in the updated prototype log during the checked session.
+
+This verifies a local interaction prototype, not authenticated multiplayer,
+production campaign persistence, packaging, or 3D/VR. See Tabletop-Prototype.md
+for the exact scope and controls.
