@@ -59,10 +59,12 @@ Read [the accepted direction](Docs/Product-Decisions.md),
 ## Current implementation
 
 The plugin includes the original in-memory campaign review model and a playable
-local top-down tabletop prototype. The prototype has DM/player views, a snapped
-grid, token/object placement, wall tools, pan/zoom, HP/dice controls, and local
-layout save/load. See [the prototype guide](Docs/Tabletop-Prototype.md) for launch
-instructions and controls.
+local top-down tabletop prototype. The prototype has multiple square/hex maps,
+individual player assignments, image backgrounds, token vision and wall-blocked
+lights, movement budgets and combat turns, and basic system-neutral sheets.
+Local session save/load preserves these settings and imports the earlier map
+format. See [the prototype guide](Docs/Tabletop-Prototype.md) for launch
+instructions, controls, and current limits.
 
 Networking, Steam, full sheets, campaign persistence, and the offline proposal
 UI remain future work. The local role switch is for testing, not authentication.

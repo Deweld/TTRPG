@@ -56,3 +56,33 @@ These defaults can be revised as the first playable workflow is tested.
 Workshop publishing, broad imports, a visual macro editor, production Internet
 connectivity, 3D scene authoring, and VR are later milestones. None is required
 to verify the first hosted 2D campaign session.
+
+## October 6 prototype expansion
+
+The owner requested multiple DM maps with individual player assignment, per-token
+vision with walls/lights, image-backed square/hex grids, movement/turn limits,
+and a basic player sheet. These are implemented first in the local interface
+prototype for hands-on review, keeping multiplayer acceptance unchanged.
+
+Implementation defaults for this basic version:
+- Two selectable local player identities; each is assigned to one map at a time.
+  Transferring an identity moves all owned tokens, and is deferred until combat
+  has ended on the source and destination maps.
+- Map dimensions and grid scale are independent. Square diagonal distance is
+  Euclidean; hex adjacency costs one distance unit times scale.
+- Cell-based sight combines the selected player's owned characters. Walls block
+  light and sight; darkness, directional cones, ranges, and darkvision are
+  configurable. There is no explored fog memory yet.
+- Out-of-combat distance limits are cumulative until the DM refreshes them.
+  Combat movement uses sheet speed and the optional stricter map cap; exceptions
+  retain that cap. DM repositioning is unrestricted by turns/distance.
+- System-neutral sheet: name, HP, max HP, defense, speed, notes. Max HP, defense,
+  and speed are DM-controlled. This field set can change when a ruleset is chosen.
+- PNG/JPEG backgrounds are managed copies under the host Saved directory, not
+  repository assets. Local session format v2 imports the previous map format
+  without overwriting the original file.
+
+These are prototype engineering choices, not decisions about final campaign
+limits, player licensing, initiative rules, or network authority. Exact ruleset,
+party/shared vision policy, cross-map transfers during combat, initiative editing,
+and more complete sheet fields remain open.

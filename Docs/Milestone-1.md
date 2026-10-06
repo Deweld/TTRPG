@@ -43,3 +43,10 @@ exercises DM/player layouts, grid movement, token/object placement, wall editing
 pan/zoom, HP/dice controls, and layout save/load. This brings forward interface
 work for hands-on testing. The multiplayer and campaign-level items above remain
 unchecked because the prototype does not satisfy their networked requirements.
+
+The October 6 expansion adds independent square/hex maps, per-player assignments,
+cell-based vision and lights, local PNG/JPEG backgrounds, cumulative movement
+limits and a basic combat tracker, and system-neutral character sheets. Version 2
+local sessions preserve these settings and import the original layout save.
+These features are available for local preview; the two-instance acceptance
+scenario and offline review integration remain outstanding.

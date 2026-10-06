@@ -1,202 +1,318 @@
 #include "TabletopModel.h"
-#include "Dom/JsonObject.h"
-#include "Serialization/JsonReader.h"
-#include "Serialization/JsonSerializer.h"
 
 namespace TTRPG::Tabletop
 {
+bool FMapData::Contains(FIntPoint C) const { return C.X >= 0 && C.Y >= 0 && C.X < Width && C.Y < Height; }
+FVector2D FMapData::Extent() const
+{
+    return Grid == EGrid::Square ? FVector2D(Width, Height) : FVector2D(Width + (Height > 1 ? .5 : 0), (Height - 1) * .8660254038 + 1.1547005384);
+}
+FVector2D FMapData::Center(FIntPoint C) const
+{
+    return Grid == EGrid::Square ? FVector2D(C.X + .5, C.Y + .5) : FVector2D(C.X + .5 + .5 * (C.Y & 1), C.Y * .8660254038 + .5773502692);
+}
+FIntPoint FMapData::CellFromPoint(FVector2D P) const
+{
+    if (Grid == EGrid::Square) return {FMath::FloorToInt32(P.X), FMath::FloorToInt32(P.Y)};
+    const double R = (P.Y - .5773502692) / .8660254038;
+    const double Q = P.X - .5 - R * .5, S = -Q - R;
+    int32 X = FMath::RoundToInt(Q), Z = FMath::RoundToInt(R), Y = FMath::RoundToInt(S);
+    const double DX = FMath::Abs(X - Q), DZ = FMath::Abs(Z - R), DY = FMath::Abs(Y - S);
+    if (DX > DY && DX > DZ) X = -Y - Z; else if (DZ > DY) Z = -X - Y;
+    return {X + (Z - (Z & 1)) / 2, Z};
+}
+TArray<FIntPoint> FMapData::Neighbors(FIntPoint C) const
+{
+    TArray<FIntPoint> Out;
+    if (Grid == EGrid::Square)
+    {
+        for (int32 Y = -1; Y <= 1; ++Y) for (int32 X = -1; X <= 1; ++X)
+            if (X || Y) Out.Add(C + FIntPoint(X, Y));
+    }
+    else
+    {
+        const int32 O = C.Y & 1;
+        Out = {{C.X-1,C.Y},{C.X+1,C.Y},{C.X-1+O,C.Y-1},{C.X+O,C.Y-1},{C.X-1+O,C.Y+1},{C.X+O,C.Y+1}};
+    }
+    return Out;
+}
 FBoardModel::FBoardModel()
 {
-    for (int32 X = 1; X < Columns - 1; ++X) { Walls.Add({X, 1}); Walls.Add({X, Rows - 2}); }
-    for (int32 Y = 2; Y < Rows - 2; ++Y) { Walls.Add({1, Y}); Walls.Add({Columns - 2, Y}); }
-    Walls.Remove({11, Rows - 2}); Walls.Remove({12, Rows - 2});
-    for (int32 X = 5; X <= 10; ++X) { if (X != 7) Walls.Add({X, 5}); }
-    for (int32 Y = 6; Y <= 8; ++Y) { Walls.Add({5, Y}); Walls.Add({10, Y}); }
-    for (int32 X = 14; X <= 19; ++X) { Walls.Add({X, 4}); if (X != 16 && X != 17) Walls.Add({X, 9}); }
-    for (int32 Y = 5; Y <= 8; ++Y) { Walls.Add({14, Y}); Walls.Add({19, Y}); }
-    Tokens.Add({NextId++, TEXT("Mira"), {6, 12}, ETokenKind::Hero, true, false, 24});
-    Tokens.Add({NextId++, TEXT("Rowan"), {9, 12}, ETokenKind::Hero, false, false, 20});
-    Tokens.Add({NextId++, TEXT("Sentinel"), {16, 7}, ETokenKind::NPC, false, false, 18});
-    Tokens.Add({NextId++, TEXT("Lookout"), {20, 5}, ETokenKind::NPC, false, true, 12});
-    Tokens.Add({NextId++, TEXT("Supply crate"), {8, 7}, ETokenKind::Prop, false, false, 1});
-    Tokens.Add({NextId++, TEXT("Old chest"), {17, 12}, ETokenKind::Prop, false, false, 1});
-    SelectedId = 1;
-    Activity.Add(TEXT("The Watchtower is ready. Welcome to the table."));
+    Maps.Add(FMapData());
+    FMapData Cave; Cave.Id=2; Cave.Name=TEXT("Lantern Cavern"); Cave.Width=16; Cave.Height=12;
+    Cave.Grid=EGrid::Hex; Cave.bVision=true; Cave.bDarkness=true;
+    Cave.Lights={{{4,5},25},{{11,7},20}};
+    for (int32 Y=1; Y<10; ++Y) if (Y!=6) Cave.Walls.Add({8,Y});
+    Maps.Add(Cave);
+    Players={{1,TEXT("Mira's player"),1},{2,TEXT("Rowan's player"),1}};
+    auto& W=Map().Walls;
+    for (int32 X=1; X<23; ++X) { W.Add({X,1}); W.Add({X,16}); }
+    for (int32 Y=2; Y<16; ++Y) { W.Add({1,Y}); W.Add({22,Y}); }
+    W.Remove({11,16}); W.Remove({12,16});
+    for (int32 X=5; X<=10; ++X) if(X!=7) W.Add({X,5});
+    for (int32 Y=6; Y<=8; ++Y) { W.Add({5,Y}); W.Add({10,Y}); }
+    for (int32 X=14; X<=19; ++X) { W.Add({X,4}); if(X!=16 && X!=17) W.Add({X,9}); }
+    for (int32 Y=5; Y<=8; ++Y) { W.Add({14,Y}); W.Add({19,Y}); }
+    Tokens.Add({NextId++,TEXT("Mira"),{6,12},ETokenKind::Hero,true,false,24});
+    Tokens.Add({NextId++,TEXT("Rowan"),{9,12},ETokenKind::Hero,false,false,20});
+    Tokens.Add({NextId++,TEXT("Sentinel"),{16,7},ETokenKind::NPC,false,false,18});
+    Tokens.Add({NextId++,TEXT("Lookout"),{20,5},ETokenKind::NPC,false,true,12});
+    Tokens.Add({NextId++,TEXT("Supply crate"),{8,7},ETokenKind::Prop,false,false,1});
+    Tokens.Add({NextId++,TEXT("Old chest"),{17,12},ETokenKind::Prop,false,false,1});
+    Tokens[0].OwnerId=1; Tokens[1].OwnerId=2;
+    for(FToken& T:Tokens) T.Sheet.MaxHP=T.HP;
+    Map().Lights={{{7,10},30},{{16,6},20}};
+    SelectedId=1; Activity.Add(TEXT("Two maps ready. DM controls player assignments."));
 }
-
-bool FBoardModel::IsInside(FIntPoint Cell) const
+FMapData& FBoardModel::Map() { return *Maps.FindByPredicate([this](const FMapData& M){return M.Id==ActiveMapId;}); }
+const FMapData& FBoardModel::Map() const { return *FindMap(ActiveMapId); }
+const FMapData* FBoardModel::FindMap(int32 Id) const { return Maps.FindByPredicate([Id](const FMapData& M){return M.Id==Id;}); }
+const FLocalPlayer* FBoardModel::Player() const { return Players.FindByPredicate([this](const FLocalPlayer& P){return P.Id==ViewingPlayerId;}); }
+const FToken* FBoardModel::Find(int32 Id) const { return Tokens.FindByPredicate([Id](const FToken& T){return T.Id==Id;}); }
+FToken* FBoardModel::Selected() { return Tokens.FindByPredicate([this](const FToken& T){return T.Id==SelectedId && IsVisible(T);}); }
+const FToken* FBoardModel::Selected() const { const FToken* T=Find(SelectedId); return T && IsVisible(*T)?T:nullptr; }
+void FBoardModel::Touch() { ++Revision; }
+bool FBoardModel::IsInside(FIntPoint C) const { return Map().Contains(C); }
+bool FBoardModel::IsVisible(const FToken& T) const { return T.MapId==ActiveMapId && (Role==ERole::DM || (!T.bHidden && IsCellVisible(T.Cell))); }
+bool FBoardModel::CanControl(const FToken& T) const { return IsVisible(T) && (Role==ERole::DM || T.OwnerId==ViewingPlayerId); }
+const FToken* FBoardModel::TokenAt(FIntPoint C,bool VisibleOnly) const
 {
-    return Cell.X >= 0 && Cell.X < Columns && Cell.Y >= 0 && Cell.Y < Rows;
+    return Tokens.FindByPredicate([&](const FToken& T){return T.MapId==ActiveMapId && T.Cell==C && (!VisibleOnly || IsVisible(T));});
 }
-bool FBoardModel::IsVisible(const FToken& Token) const { return Role == ERole::DM || !Token.bHidden; }
-bool FBoardModel::CanControl(const FToken& Token) const { return IsVisible(Token) && (Role == ERole::DM || Token.bOwnedByPlayer); }
-const FToken* FBoardModel::Find(int32 Id) const { return Tokens.FindByPredicate([Id](const FToken& T) { return T.Id == Id; }); }
-const FToken* FBoardModel::TokenAt(FIntPoint Cell, bool bVisibleOnly) const
+bool FBoardModel::IsAvailable(FIntPoint C,int32 IgnoreId) const
 {
-    return Tokens.FindByPredicate([&](const FToken& T) { return T.Cell == Cell && (!bVisibleOnly || IsVisible(T)); });
+    const FToken* T=TokenAt(C,false); return IsInside(C) && !Map().Walls.Contains(C) && (!T || T->Id==IgnoreId);
 }
-bool FBoardModel::IsAvailable(FIntPoint Cell, int32 IgnoreId) const
-{
-    const FToken* Occupant = TokenAt(Cell, false);
-    return IsInside(Cell) && !Walls.Contains(Cell) && (!Occupant || Occupant->Id == IgnoreId);
-}
-void FBoardModel::Log(const FString& Message)
-{
-    Status = Message;
-    Activity.Insert(Message, 0);
-    if (Activity.Num() > 6) Activity.SetNum(6);
-}
+void FBoardModel::Log(const FString& Message) { Status=Message; Activity.Insert(Message,0); if(Activity.Num()>6) Activity.SetNum(6); Touch(); }
 void FBoardModel::SetRole(ERole NewRole)
 {
-    Role = NewRole;
-    Tool = ETool::Select;
-    SelectedId = 1;
-    if (const FToken* Selected = Find(SelectedId); !Selected || !IsVisible(*Selected)) SelectedId = INDEX_NONE;
-    // A separate player view must not expose DM-only action history.
-    Activity.Empty();
-    Log(Role == ERole::DM ? TEXT("DM view: all tokens and map tools available.") : TEXT("Player view: control your teal token, Mira."));
+    Role=NewRole; Tool=ETool::Select; SelectedId=INDEX_NONE;
+    if(Role==ERole::Player && Player()) ActiveMapId=Player()->MapId;
+    Touch();
+    for(const FToken& T:Tokens) if(IsVisible(T) && T.OwnerId==ViewingPlayerId) { SelectedId=T.Id; break; }
+    Activity.Empty(); Log(Role==ERole::DM?TEXT("DM view: edit maps and assign players independently."):TEXT("Player view: your assigned map and visible characters only."));
+}
+void FBoardModel::SetPlayer(int32 Id)
+{
+    if(!Players.ContainsByPredicate([Id](const FLocalPlayer& P){return P.Id==Id;})) return;
+    ViewingPlayerId=Id; SetRole(Role);
+}
+bool FBoardModel::SwitchMap(int32 Id)
+{
+    if(!FindMap(Id) || (Role!=ERole::DM && (!Player() || Player()->MapId!=Id))) return false;
+    ActiveMapId=Id; SelectedId=INDEX_NONE; Tool=ETool::Select; Activity.Empty(); Log(TEXT("Map opened. Player assignments are unchanged.")); return true;
+}
+int32 FBoardModel::AddMap(const FString& Name,int32 Width,int32 Height,EGrid Grid)
+{
+    if(Role!=ERole::DM || Maps.Num()>=16 || Width<4 || Width>64 || Height<4 || Height>64 || Name.TrimStartAndEnd().IsEmpty()) return INDEX_NONE;
+    FMapData M; M.Id=NextMapId++; M.Name=Name.Left(80); M.Width=Width; M.Height=Height; M.Grid=Grid;
+    Maps.Add(M); SwitchMap(M.Id); return M.Id;
+}
+bool FBoardModel::ResizeMap(int32 Width,int32 Height)
+{
+    if(Role!=ERole::DM || Width<4 || Width>64 || Height<4 || Height>64) return false;
+    auto Fits=[=](FIntPoint C){return C.X<Width && C.Y<Height;};
+    for(FIntPoint C:Map().Walls) if(!Fits(C)) {Status=TEXT("Resize would cut off walls. Clear them first."); return false;}
+    for(const FMapLight& L:Map().Lights) if(!Fits(L.Cell)) {Status=TEXT("Resize would cut off lights."); return false;}
+    for(const FToken& T:Tokens) if(T.MapId==ActiveMapId && !Fits(T.Cell)) {Status=TEXT("Resize would cut off tokens."); return false;}
+    Map().Width=Width; Map().Height=Height; Log(TEXT("Map size updated.")); return true;
+}
+bool FBoardModel::AssignPlayer(int32 Id,int32 MapId)
+{
+    FLocalPlayer* P=Players.FindByPredicate([Id](const FLocalPlayer& V){return V.Id==Id;});
+    const FMapData* Dest=FindMap(MapId);
+    if(Role!=ERole::DM || !P || !Dest) return false;
+    if(P->MapId==MapId) return true;
+    if(FindMap(P->MapId)->bCombat || Dest->bCombat) {Status=TEXT("End combat on both maps before transferring this player."); return false;}
+    TArray<int32> Owned;
+    for(int32 I=0; I<Tokens.Num(); ++I) if(Tokens[I].OwnerId==Id) Owned.Add(I);
+    TArray<FIntPoint> Free;
+    for(int32 Y=0; Y<Dest->Height && Free.Num()<Owned.Num(); ++Y) for(int32 X=0; X<Dest->Width && Free.Num()<Owned.Num(); ++X)
+    {
+        FIntPoint C(X,Y);
+        if(!Dest->Walls.Contains(C) && !Tokens.ContainsByPredicate([&](const FToken& T){return T.MapId==MapId && T.Cell==C;})) Free.Add(C);
+    }
+    if(Free.Num()<Owned.Num()) {Status=TEXT("Destination has too few open cells. No changes made."); return false;}
+    for(int32 I=0; I<Owned.Num(); ++I) {FToken& T=Tokens[Owned[I]]; T.MapId=MapId; T.Cell=Free[I]; T.MovementSpent=0;}
+    P->MapId=MapId; SelectedId=INDEX_NONE;
+    Log(FString::Printf(TEXT("%s assigned to %s."),*P->Name,*Dest->Name)); return true;
 }
 void FBoardModel::Select(int32 Id)
 {
-    const FToken* Token = Find(Id);
-    if (!Token || !IsVisible(*Token)) { SelectedId = INDEX_NONE; return; }
-    SelectedId = Id;
-    Status = CanControl(*Token) ? TEXT("Drag the selected token, or click an empty cell to move.") : TEXT("This token belongs to another participant. View only.");
+    const FToken* T=Find(Id); SelectedId=T && IsVisible(*T)?Id:INDEX_NONE;
+    Status=T && CanControl(*T)?TEXT("Drag to move. Sheet speed and turn rules apply in player view."):TEXT("View only / another participant.");
 }
-bool FBoardModel::Move(int32 Id, FIntPoint Cell)
+float FBoardModel::PathDistance(const FToken& Token,FIntPoint Goal) const
 {
-    FToken* Token = Tokens.FindByPredicate([Id](const FToken& T) { return T.Id == Id; });
-    if (!Token || !CanControl(*Token)) { Status = TEXT("You can only move a token you control."); return false; }
-    if (!IsAvailable(Cell, Id)) { Status = TEXT("That cell is unavailable. Choose an open cell inside the map."); return false; }
-    if (Token->Cell == Cell) return true;
-    Token->Cell = Cell;
-    Log(FString::Printf(TEXT("%s moved to %c%d."), *Token->Name, TCHAR('A' + Cell.X), Cell.Y + 1));
-    return true;
-}
-bool FBoardModel::Place(ETokenKind Kind, FIntPoint Cell)
-{
-    if (Role != ERole::DM || !IsAvailable(Cell) || NextId >= MAX_int32) { Status = TEXT("Placement requires DM view, an open cell, and an available token ID."); return false; }
-    const FString Label = Kind == ETokenKind::Hero ? TEXT("Adventurer") : Kind == ETokenKind::NPC ? TEXT("Scout") : TEXT("Crate");
-    const int32 Id = NextId++;
-    Tokens.Add({Id, FString::Printf(TEXT("%s %d"), *Label, Id), Cell, Kind, Kind == ETokenKind::Hero, false, Kind == ETokenKind::Prop ? 1 : 20});
-    SelectedId = Id;
-    Log(FString::Printf(TEXT("Placed %s at %c%d."), *Label, TCHAR('A' + Cell.X), Cell.Y + 1));
-    return true;
-}
-bool FBoardModel::PaintWall(FIntPoint Cell, bool bAdd)
-{
-    if (Role != ERole::DM || !IsInside(Cell) || (bAdd && TokenAt(Cell, false))) { Status = TEXT("Walls require an empty cell and DM view."); return false; }
-    if (bAdd) Walls.Add(Cell); else Walls.Remove(Cell);
-    Status = bAdd ? TEXT("Wall placed. Drag to paint more cells.") : TEXT("Wall removed. Drag to clear more cells.");
-    return true;
-}
-bool FBoardModel::PaintStroke(FIntPoint From, FIntPoint To, bool bAdd)
-{
-    if (Role != ERole::DM || !IsInside(From) || !IsInside(To)) return false;
-    const int32 Steps = FMath::Max(FMath::Abs(To.X - From.X), FMath::Abs(To.Y - From.Y));
-    bool bChanged = false;
-    for (int32 I = 0; I <= Steps; ++I)
+    if(!IsAvailable(Goal,Token.Id)) return -1;
+    struct FNode { FIntPoint Cell; float Score; bool operator<(const FNode& O) const {return Score<O.Score;} };
+    TArray<FNode> Open; TMap<FIntPoint,float> Cost; TSet<FIntPoint> Closed;
+    auto H=[&](FIntPoint C){return float((Map().Center(C)-Map().Center(Goal)).Size())*Map().UnitsPerCell;};
+    Cost.Add(Token.Cell,0); Open.HeapPush({Token.Cell,H(Token.Cell)});
+    while(!Open.IsEmpty())
     {
-        const float Alpha = Steps > 0 ? float(I) / Steps : 0.f;
-        const FIntPoint Cell(FMath::RoundToInt(FMath::Lerp(float(From.X), float(To.X), Alpha)),
-            FMath::RoundToInt(FMath::Lerp(float(From.Y), float(To.Y), Alpha)));
-        bChanged |= PaintWall(Cell, bAdd);
+        FNode Node; Open.HeapPop(Node); if(Closed.Contains(Node.Cell)) continue;
+        if(Node.Cell==Goal) return Cost[Node.Cell]; Closed.Add(Node.Cell);
+        for(FIntPoint N:Map().Neighbors(Node.Cell))
+        {
+            if(!IsAvailable(N,Token.Id) || Closed.Contains(N)) continue;
+            FIntPoint D=N-Node.Cell;
+            if(Map().Grid==EGrid::Square && D.X && D.Y && (!IsAvailable(Node.Cell+FIntPoint(D.X,0),Token.Id) || !IsAvailable(Node.Cell+FIntPoint(0,D.Y),Token.Id))) continue;
+            float Step=Map().UnitsPerCell*(Map().Grid==EGrid::Square && D.X && D.Y?1.41421356f:1.f);
+            float NewCost=Cost[Node.Cell]+Step; const float* Old=Cost.Find(N);
+            if(!Old || NewCost<*Old) {Cost.Add(N,NewCost); Open.HeapPush({N,NewCost+H(N)});}
+        }
     }
-    return bChanged;
+    return -1;
+}
+int32 FBoardModel::ActiveTurnId() const {return Map().bCombat && Map().TurnOrder.IsValidIndex(Map().TurnIndex)?Map().TurnOrder[Map().TurnIndex]:INDEX_NONE;}
+float FBoardModel::RemainingMovement(const FToken& T) const
+{
+    float Limit=Map().bCombat?T.Sheet.Speed:Map().bLimitMovement?Map().MovementLimit:-1;
+    if(Map().bCombat && Map().bLimitMovement) Limit=FMath::Min(Limit,Map().MovementLimit);
+    return Limit<0?-1:FMath::Max(0.f,Limit-T.MovementSpent);
+}
+bool FBoardModel::Move(int32 Id,FIntPoint Cell)
+{
+    FToken* T=Tokens.FindByPredicate([Id](const FToken& V){return V.Id==Id;});
+    if(!T || !CanControl(*T)) {Status=TEXT("You can only move a token you control on this map."); return false;}
+    if(!IsAvailable(Cell,Id) || (Role==ERole::Player && !IsCellVisible(Cell))) {Status=TEXT("That destination is unavailable."); return false;}
+    if(T->Cell==Cell) return true;
+    if(Role==ERole::Player)
+    {
+        if(Map().bCombat && ActiveTurnId()!=Id && !T->bOutOfTurn) {Status=TEXT("Wait for your turn, or ask the DM for a movement exception."); return false;}
+        float Cost=PathDistance(*T,Cell), Remaining=RemainingMovement(*T);
+        if(Cost<0) {Status=TEXT("There is no open path to that destination."); return false;}
+        if(Remaining>=0 && Cost>Remaining+.001f) {Status=FString::Printf(TEXT("Movement budget exceeded. %.1f units remain."),Remaining); return false;}
+        if(Remaining>=0) T->MovementSpent+=Cost;
+    }
+    T->Cell=Cell; Touch(); Log(FString::Printf(TEXT("%s moved to column %d, row %d."),*T->Name,Cell.X+1,Cell.Y+1)); return true;
+}
+void FBoardModel::ToggleCombat()
+{
+    if(Role!=ERole::DM) return;
+    auto& M=Map(); M.bCombat=!M.bCombat; M.TurnOrder.Empty(); M.TurnIndex=0; M.Round=1;
+    for(FToken& T:Tokens) if(T.MapId==ActiveMapId) {T.MovementSpent=0; if(M.bCombat && T.Kind!=ETokenKind::Prop) M.TurnOrder.Add(T.Id);}
+    if(M.TurnOrder.IsEmpty()) M.bCombat=false;
+    Log(M.bCombat?TEXT("Combat started. Turn order follows the roster."):TEXT("Combat ended. Movement allowances reset."));
+}
+void FBoardModel::NextTurn()
+{
+    if(Role!=ERole::DM || !Map().bCombat || Map().TurnOrder.IsEmpty()) return;
+    Map().TurnIndex=(Map().TurnIndex+1)%Map().TurnOrder.Num(); if(!Map().TurnIndex) ++Map().Round;
+    for(FToken& T:Tokens) if(T.Id==ActiveTurnId()) T.MovementSpent=0;
+    Log(TEXT("Next turn. Active character's movement refreshed."));
+}
+void FBoardModel::ResetMovement()
+{
+    if(Role!=ERole::DM) return;
+    for(FToken& T:Tokens) if(T.MapId==ActiveMapId) T.MovementSpent=0;
+    Log(TEXT("DM refreshed movement allowances on this map."));
+}
+bool FBoardModel::Place(ETokenKind Kind,FIntPoint Cell)
+{
+    if(Role!=ERole::DM || !IsAvailable(Cell) || NextId>=MAX_int32 || Tokens.Num()>=512) return false;
+    if(Kind==ETokenKind::Hero && (!Player() || Player()->MapId!=ActiveMapId)) {Status=TEXT("Assign the selected player to this map before placing their character."); return false;}
+    FString Name=Kind==ETokenKind::Hero?TEXT("Adventurer"):Kind==ETokenKind::NPC?TEXT("Scout"):TEXT("Crate");
+    FToken T; T.Id=NextId++; T.Name=FString::Printf(TEXT("%s %d"),*Name,T.Id); T.Cell=Cell; T.Kind=Kind;
+    T.MapId=ActiveMapId; T.OwnerId=Kind==ETokenKind::Hero?ViewingPlayerId:0; T.bOwnedByPlayer=T.OwnerId==1;
+    T.HP=Kind==ETokenKind::Prop?1:20; T.Sheet.MaxHP=T.HP; Tokens.Add(T); SelectedId=T.Id;
+    if(Map().bCombat && Kind!=ETokenKind::Prop) Map().TurnOrder.Add(T.Id);
+    Log(TEXT("Token placed on the active map.")); return true;
+}
+bool FBoardModel::PaintWall(FIntPoint Cell,bool Add)
+{
+    if(Role!=ERole::DM || !IsInside(Cell) || (Add && (TokenAt(Cell,false) || Map().Lights.ContainsByPredicate([&](const FMapLight& L){return L.Cell==Cell;})))) return false;
+    if(Add) Map().Walls.Add(Cell); else Map().Walls.Remove(Cell);
+    Status=Add?TEXT("Wall placed: blocks movement and line of sight."):TEXT("Wall removed."); Touch(); return true;
+}
+bool FBoardModel::PaintStroke(FIntPoint From,FIntPoint To,bool Add)
+{
+    if(Role!=ERole::DM || !IsInside(From) || !IsInside(To)) return false;
+    FVector2D A=Map().Center(From), B=Map().Center(To); int32 Steps=FMath::Max(1,FMath::CeilToInt((B-A).Size()*3)); bool Changed=false;
+    for(int32 I=0; I<=Steps; ++I) Changed|=PaintWall(Map().CellFromPoint(FMath::Lerp(A,B,double(I)/Steps)),Add);
+    return Changed;
+}
+bool FBoardModel::PlaceLight(FIntPoint Cell,float Range,bool Remove)
+{
+    if(Role!=ERole::DM || !IsInside(Cell)) return false;
+    if(Remove) Map().Lights.RemoveAll([&](const FMapLight& L){return L.Cell==Cell;});
+    else
+    {
+        if(Map().Walls.Contains(Cell) || !FMath::IsFinite(Range) || Range<1 || Range>500) return false;
+        FMapLight* L=Map().Lights.FindByPredicate([&](const FMapLight& V){return V.Cell==Cell;});
+        if(L) L->Range=Range; else if(Map().Lights.Num()<32) Map().Lights.Add({Cell,Range}); else return false;
+    }
+    Log(Remove?TEXT("Light removed."):TEXT("Light placed. Walls block illumination.")); return true;
 }
 bool FBoardModel::ToggleHidden()
 {
-    FToken* Token = Tokens.FindByPredicate([&](const FToken& T) { return T.Id == SelectedId; });
-    if (Role != ERole::DM || !Token) return false;
-    Token->bHidden = !Token->bHidden;
-    Log(FString::Printf(TEXT("%s is %s players."), *Token->Name, Token->bHidden ? TEXT("hidden from") : TEXT("visible to")));
-    return true;
+    FToken* T=Selected(); if(Role!=ERole::DM || !T) return false; T->bHidden=!T->bHidden; Log(TEXT("Token visibility updated.")); return true;
 }
 bool FBoardModel::ChangeHP(int32 Delta)
 {
-    FToken* Token = Tokens.FindByPredicate([&](const FToken& T) { return T.Id == SelectedId; });
-    if (!Token || !CanControl(*Token) || Token->Kind == ETokenKind::Prop) return false;
-    Token->HP = FMath::Clamp(Token->HP + FMath::Clamp(Delta, -1, 1), 0, 999);
-    Log(FString::Printf(TEXT("%s now has %d HP."), *Token->Name, Token->HP));
-    return true;
+    FToken* T=Selected(); if(!T || !CanControl(*T) || T->Kind==ETokenKind::Prop) return false;
+    T->HP=FMath::Clamp(T->HP+FMath::Clamp(Delta,-1,1),0,T->Sheet.MaxHP); Log(TEXT("HP updated.")); return true;
+}
+bool FBoardModel::UpdateSheet(const FCharacterSheet& Sheet,const FString& Name,int32 HP)
+{
+    FToken* T=Selected();
+    if(!T || !CanControl(*T) || T->Kind==ETokenKind::Prop || Name.TrimStartAndEnd().IsEmpty() || Name.Len()>80 || Sheet.Notes.Len()>4096
+        || Sheet.MaxHP<1 || Sheet.MaxHP>9999 || HP<0 || HP>Sheet.MaxHP || Sheet.Defense<0 || Sheet.Defense>999 || !FMath::IsFinite(Sheet.Speed) || Sheet.Speed<0 || Sheet.Speed>1000) return false;
+    if(Role==ERole::Player && (Sheet.MaxHP!=T->Sheet.MaxHP || Sheet.Speed!=T->Sheet.Speed || Sheet.Defense!=T->Sheet.Defense)) {Status=TEXT("Max HP, defense, and speed are DM-controlled."); return false;}
+    T->Sheet=Sheet; T->Name=Name; T->HP=HP; Log(TEXT("Character sheet saved.")); return true;
 }
 void FBoardModel::RollD20()
 {
-    const FToken* Token = Find(SelectedId);
-    if (!Token || !CanControl(*Token) || Token->Kind == ETokenKind::Prop) { Status = TEXT("Select a character you control to roll."); return; }
-    Log(FString::Printf(TEXT("%s rolled d20: %d"), *Token->Name, FMath::RandRange(1, 20)));
+    const FToken* T=Selected(); if(!T || !CanControl(*T) || T->Kind==ETokenKind::Prop) return;
+    Log(FString::Printf(TEXT("%s rolled d20: %d"),*T->Name,FMath::RandRange(1,20)));
 }
-FString FBoardModel::ToJson() const
+bool FBoardModel::HasSight(const FMapData& M,FIntPoint From,FIntPoint To) const
 {
-    auto Root = MakeShared<FJsonObject>();
-    Root->SetNumberField(TEXT("version"), 1);
-    TArray<TSharedPtr<FJsonValue>> JsonTokens;
-    for (const FToken& T : Tokens)
+    if(!M.Contains(From) || !M.Contains(To)) return false; if(From==To) return true;
+    FVector2D A=M.Center(From), B=M.Center(To); int32 Steps=FMath::Max(1,FMath::CeilToInt((B-A).Size()*8)); FIntPoint Previous=From;
+    for(int32 I=1; I<=Steps; ++I)
     {
-        auto J = MakeShared<FJsonObject>();
-        J->SetNumberField(TEXT("id"), T.Id); J->SetStringField(TEXT("name"), T.Name);
-        J->SetNumberField(TEXT("x"), T.Cell.X); J->SetNumberField(TEXT("y"), T.Cell.Y);
-        J->SetNumberField(TEXT("kind"), int32(T.Kind)); J->SetNumberField(TEXT("hp"), T.HP);
-        J->SetBoolField(TEXT("owned"), T.bOwnedByPlayer); J->SetBoolField(TEXT("hidden"), T.bHidden);
-        JsonTokens.Add(MakeShared<FJsonValueObject>(J));
+        FIntPoint C=M.CellFromPoint(FMath::Lerp(A,B,double(I)/Steps)); if(C==Previous) continue;
+        FIntPoint D=C-Previous;
+        if(M.Grid==EGrid::Square && D.X && D.Y && (M.Walls.Contains(Previous+FIntPoint(D.X,0)) || M.Walls.Contains(Previous+FIntPoint(0,D.Y)))) return false;
+        if(C==To) return true; if(M.Walls.Contains(C)) return false; Previous=C;
     }
-    Root->SetArrayField(TEXT("tokens"), JsonTokens);
-    TArray<TSharedPtr<FJsonValue>> JsonWalls;
-    for (const FIntPoint& W : Walls)
-    {
-        auto J = MakeShared<FJsonObject>(); J->SetNumberField(TEXT("x"), W.X); J->SetNumberField(TEXT("y"), W.Y);
-        JsonWalls.Add(MakeShared<FJsonValueObject>(J));
-    }
-    Root->SetArrayField(TEXT("walls"), JsonWalls);
-    FString Json;
-    FJsonSerializer::Serialize(Root, TJsonWriterFactory<>::Create(&Json));
-    return Json;
-}
-bool FBoardModel::LoadJson(const FString& Json)
-{
-    auto Fail = [this]() { Status = TEXT("Could not load this map. The current layout was preserved."); return false; };
-    if (Role != ERole::DM || Json.Len() > 1024 * 1024) return Fail();
-    TSharedPtr<FJsonObject> Root;
-    if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json), Root) || !Root) return Fail();
-    double Version;
-    const TArray<TSharedPtr<FJsonValue>>* JT;
-    const TArray<TSharedPtr<FJsonValue>>* JW;
-    if (!Root->TryGetNumberField(TEXT("version"), Version) || Version != 1
-        || !Root->TryGetArrayField(TEXT("tokens"), JT) || !Root->TryGetArrayField(TEXT("walls"), JW)
-        || JT->Num() > Columns * Rows || JW->Num() > Columns * Rows) return Fail();
-    auto Integer = [](const FJsonObject& J, const TCHAR* Key, int32 Min, int32 Max, int32& Out)
-    {
-        double N;
-        if (!J.TryGetNumberField(Key, N) || !FMath::IsFinite(N) || N < Min || N > Max || N != FMath::FloorToDouble(N)) return false;
-        Out = int32(N); return true;
-    };
-    TSet<FIntPoint> NewWalls;
-    TArray<FToken> NewTokens;
-    TSet<int32> Ids;
-    TSet<FIntPoint> Occupied;
-    int32 NewNextId = 1;
-    for (const auto& Value : *JW)
-    {
-        const TSharedPtr<FJsonObject>* J; FIntPoint C;
-        if (!Value->TryGetObject(J) || !Integer(**J, TEXT("x"), 0, Columns - 1, C.X)
-            || !Integer(**J, TEXT("y"), 0, Rows - 1, C.Y) || NewWalls.Contains(C)) return Fail();
-        NewWalls.Add(C);
-    }
-    for (const auto& Value : *JT)
-    {
-        const TSharedPtr<FJsonObject>* J; FToken T; int32 Kind;
-        if (!Value->TryGetObject(J) || !Integer(**J, TEXT("id"), 1, MAX_int32 - 1, T.Id)
-            || !Integer(**J, TEXT("x"), 0, Columns - 1, T.Cell.X) || !Integer(**J, TEXT("y"), 0, Rows - 1, T.Cell.Y)
-            || !Integer(**J, TEXT("kind"), 0, 2, Kind) || !Integer(**J, TEXT("hp"), 0, 999, T.HP)
-            || !(*J)->TryGetStringField(TEXT("name"), T.Name) || T.Name.IsEmpty() || T.Name.Len() > 80
-            || !(*J)->TryGetBoolField(TEXT("owned"), T.bOwnedByPlayer) || !(*J)->TryGetBoolField(TEXT("hidden"), T.bHidden)
-            || Ids.Contains(T.Id) || Occupied.Contains(T.Cell) || NewWalls.Contains(T.Cell)) return Fail();
-        T.Kind = ETokenKind(Kind); NewNextId = FMath::Max(NewNextId, T.Id + 1);
-        Ids.Add(T.Id); Occupied.Add(T.Cell); NewTokens.Add(MoveTemp(T));
-    }
-    Tokens = MoveTemp(NewTokens); Walls = MoveTemp(NewWalls); NextId = NewNextId;
-    SelectedId = INDEX_NONE; Tool = ETool::Select;
-    Log(TEXT("Saved tabletop layout restored."));
     return true;
+}
+bool FBoardModel::IsLit(const FMapData& M,FIntPoint C) const
+{
+    if(!M.bDarkness) return true;
+    // Reuse wall-occluded illumination across Slate frames and token vision checks.
+    if(LightRevision!=Revision || LightMap!=M.Id) {LitCells.Empty(); LightRevision=Revision; LightMap=M.Id;}
+    if(const bool* Cached=LitCells.Find(C)) return *Cached;
+    bool Lit=false;
+    for(const FMapLight& L:M.Lights) if((M.Center(C)-M.Center(L.Cell)).Size()*M.UnitsPerCell<=L.Range+.001 && HasSight(M,L.Cell,C)) {Lit=true; break;}
+    LitCells.Add(C,Lit); return Lit;
+}
+void FBoardModel::RefreshVision() const
+{
+    if(VisionRevision==Revision && VisionMap==ActiveMapId && VisionPlayer==ViewingPlayerId) return;
+    VisibleCells.Empty(); VisionRevision=Revision; VisionMap=ActiveMapId; VisionPlayer=ViewingPlayerId;
+    const FMapData& M=Map();
+    for(int32 Y=0; Y<M.Height; ++Y) for(int32 X=0; X<M.Width; ++X)
+    {
+        FIntPoint C(X,Y);
+        for(const FToken& T:Tokens)
+        {
+            if(T.MapId!=ActiveMapId || T.OwnerId!=ViewingPlayerId || T.bHidden || T.Kind==ETokenKind::Prop) continue;
+            if(C==T.Cell) {VisibleCells.Add(C); break;}
+            FVector2D D=M.Center(C)-M.Center(T.Cell); if(D.Size()*M.UnitsPerCell>T.VisionRange+.001) continue;
+            float Angle=FMath::RadiansToDegrees(FMath::Atan2(float(D.Y),float(D.X)));
+            if(T.VisionAngle<360 && FMath::Abs(FMath::FindDeltaAngleDegrees(T.Facing,Angle))>T.VisionAngle*.5f+.001f) continue;
+            if(HasSight(M,T.Cell,C) && (T.bDarkvision || IsLit(M,C))) {VisibleCells.Add(C); break;}
+        }
+    }
+}
+bool FBoardModel::IsCellVisible(FIntPoint C) const
+{
+    if(!IsInside(C)) return false; if(Role==ERole::DM) return true;
+    if(!Player() || Player()->MapId!=ActiveMapId) return false; if(!Map().bVision) return true;
+    RefreshVision(); return VisibleCells.Contains(C);
 }
 }
