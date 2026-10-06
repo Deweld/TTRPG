@@ -6,6 +6,6 @@ public class TTRPGTabletop : ModuleRules
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
         PublicDependencyModuleNames.AddRange(new[] { "Core", "CoreUObject", "Engine" });
-        PrivateDependencyModuleNames.AddRange(new[] { "InputCore", "Slate", "SlateCore", "Json" });
+        PrivateDependencyModuleNames.AddRange(new[] { "InputCore", "Slate", "SlateCore", "Json", "ImageWrapper", "ImageCore", "RenderCore", "RHI" });
     }
 }

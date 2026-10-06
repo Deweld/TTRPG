@@ -41,9 +41,9 @@ bool FTabletopGridTest::RunTest(const FString&)
     TestTrue(TEXT("DM can place crate"), M.Place(ETokenKind::Prop, {11, 10}));
     TestFalse(TEXT("Cannot stack new token"), M.Place(ETokenKind::NPC, {11, 10}));
     TestTrue(TEXT("Fast wall stroke succeeds"), M.PaintStroke({12, 14}, {16, 14}, true));
-    for (int32 X = 12; X <= 16; ++X) TestTrue(TEXT("Stroke fills every skipped cell"), M.Walls.Contains({X, 14}));
+    for (int32 X = 12; X <= 16; ++X) TestTrue(TEXT("Stroke fills every skipped cell"), M.Map().Walls.Contains({X, 14}));
     TestTrue(TEXT("Fast erase stroke succeeds"), M.PaintStroke({12, 14}, {16, 14}, false));
-    for (int32 X = 12; X <= 16; ++X) TestFalse(TEXT("Erase clears every skipped cell"), M.Walls.Contains({X, 14}));
+    for (int32 X = 12; X <= 16; ++X) TestFalse(TEXT("Erase clears every skipped cell"), M.Map().Walls.Contains({X, 14}));
     M.SetRole(ERole::Player);
     TestFalse(TEXT("Player cannot paint strokes"), M.PaintStroke({12, 14}, {16, 14}, true));
     return true;
@@ -62,7 +62,7 @@ bool FTabletopPersistenceTest::RunTest(const FString&)
     TestEqual(TEXT("HP restored"), Restored.Find(1)->HP, 23);
     TestEqual(TEXT("Grid position restored"), Restored.Find(1)->Cell, FIntPoint(7, 12));
     TestTrue(TEXT("Visibility restored"), Restored.Find(1)->bHidden);
-    TestTrue(TEXT("Painted wall restored"), Restored.Walls.Contains({11, 10}));
+    TestTrue(TEXT("Painted wall restored"), Restored.Map().Walls.Contains({11, 10}));
     TestTrue(TEXT("Can create a token after load"), Restored.Place(ETokenKind::Hero, {13, 11}));
     TestTrue(TEXT("New ID remains unique"), Restored.Tokens.Last().Id > Original.Tokens.Last().Id);
     return true;

@@ -44,3 +44,33 @@ Verified October 4, 2026 with the same UE 5.8.3 editor target:
 This verifies a local interaction prototype, not authenticated multiplayer,
 production campaign persistence, packaging, or 3D/VR. See Tabletop-Prototype.md
 for the exact scope and controls.
+
+## Maps, vision, movement, and sheets
+
+Verified October 6, 2026 with UE 5.8.3 / Win64 Development editor:
+
+- Host/plugin build succeeded after the final UI changes.
+- All 18 automation tests passed (8 campaign review, 10 tabletop), with no
+  failures or skipped tests. The six additional tests cover independent map
+  assignments and failed-transfer atomicity; square/hex geometry and paths;
+  directional sight, walls, light and darkness; cumulative movement, combat,
+  and exceptions; sheet authority; and v2 restoration / v1 migration / invalid
+  relationship and image-path rejection.
+- Final local report: `Saved/TTRPGAutomation/f0c22640e6aa4a2bb5537720040eb3ef/index.json`.
+- Live native Slate checks verified square and hex rendering, transferring Mira
+  while Rowan stayed on the original map, player-specific map lists and fog,
+  token dragging, visible sheet permission differences, PNG and JPEG background
+  import, combat advancement and out-of-turn rejection, and session save/reload
+  with the managed image and combat state restored.
+- Live verification caught a first-frame polygon-array assertion that headless
+  tests did not exercise; corrected it and successfully relaunched. Reduced tab
+  padding after seeing clipped labels in the native window. No runtime errors
+  appeared in the subsequent checked interactive session.
+- The original owner's Map.json remains byte-identical to its earlier backup.
+  Test session/artwork stay local and untracked. Loading the original layout
+  uses the migration path; it is never overwritten by the v2 save writer.
+
+Remaining verification: packaged builds, hardware/performance limits, networked
+permissions and replication, cross-machine asset transfer, and the complete
+Milestone 1 two-instance workflow. Lighting here is discrete cell visibility,
+not Unreal scene lighting or 3D/VR rendering.
