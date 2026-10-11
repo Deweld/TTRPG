@@ -7,3 +7,5 @@
 *.uplugin text eol=lf
 *.uasset binary
 *.umap binary
+# Preserve upstream Lua formatting and collapse vendored code in reviews.
+Plugins/TTRPGCore/Source/TTRPGTabletop/Private/ThirdParty/Lua/* text eol=lf linguist-vendored whitespace=-blank-at-eof

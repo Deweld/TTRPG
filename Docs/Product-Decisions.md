@@ -86,3 +86,62 @@ These are prototype engineering choices, not decisions about final campaign
 limits, player licensing, initiative rules, or network authority. Exact ruleset,
 party/shared vision policy, cross-map transfers during combat, initiative editing,
 and more complete sheet fields remain open.
+
+## October 11 workspace and scripting overhaul
+
+The owner requested explicit entry roles and separate Map Editor, Game Play,
+Token Edit and Script workspaces. These expand the local prototype without
+changing the hosted-session acceptance scenario.
+
+Accepted feature direction:
+- Entry as DM or player; only the DM can preview a player's view and return.
+- Map preparation tools grouped around layout, tokens, lighting and triggers,
+  including new, duplicate and delete map operations.
+- Game Play can lock map editing and present macros, reference links, conditions,
+  status bars, initiative and movement review controls.
+- Token defaults are distinct from instance properties, ownership and associated
+  sheets. Bars bind to attributes rather than hard-coded resource names.
+- Scripts use a common language inside a restricted runtime, can inspect
+  role-appropriate attributes, and can bind to map or token events.
+- The owner accepted Lua and asked for simple, easy-to-learn scripting. Provide
+  one-line starter actions and an inline reference before more complex examples.
+- Players on their turn may propose forced movement of others for DM approval.
+
+Implementation defaults for this iteration:
+- A role entry lasts until the prototype restarts. DM player-preview is reversible;
+  standalone Player entry has no DM switch. This is a local workflow boundary,
+  not an authenticated multiplayer identity provider.
+- Game Play begins with layout editing locked. Map Editor permits DM authoring;
+  gameplay event scripts do not fire while preparing the map.
+- Duplicating a map copies layout, links and unowned tokens, resets combat, and
+  leaves player characters and scripts on the original. Delete requires a local
+  confirmation and refuses the final map, assigned players or active combat.
+- One session-wide token creation template stores sheet values, attributes,
+  bars and vision. Existing instances change only on explicit apply. Ownership,
+  position, conditions, initiative and movement are instance values.
+- System-neutral conditions are labels; mechanics come from the chosen ruleset
+  or explicit scripts. Owners can update current bars on their own tokens while
+  their maxima and mechanical fields remain DM-controlled.
+- Combat sorts by descending initiative, then token ID for ties. Mid-combat
+  initiative edits preserve the active actor. Forced-move requests are explicit,
+  bounded proposals and revalidate current state at DM approval. They do not
+  calculate ruleset-specific shove range, strength or attack consequences.
+- Lua 5.4 source is bundled under its upstream license. The runtime exposes
+  bounded attribute/condition commands and read-only snapshots, with no OS shell,
+  files, network, package loading, native handles or Unreal object access. Scripts
+  have source, memory, instruction, command and log limits.
+- DM-authored automatic events are `move`, `turn_start` and `condition_added`;
+  manual scripts are macros. Scripts have map and optional token scope, an
+  enabled flag and an optional required token condition. Player-authored scripts
+  are manual. A player invoking a shared macro uses player permissions.
+- Local DM entry supplies the automatic-event host context, including DM preview
+  of a player. Standalone Player entry has no authenticated host and does not run
+  DM automatic events. Production multiplayer will dispatch events on its host.
+- Format v3 persists new properties, links and source without executing scripts
+  on load. V1/V2 remain importable. Entry authority and workspace remain runtime
+  state. Pending movement approvals are cleared on load rather than replayed.
+
+These defaults do not settle a final ruleset, token library/schema format,
+production script threat model, multiplayer synchronization, trigger ordering
+across network commands, script sharing/import trust, or commercial limits.
+See [prototype controls](Tabletop-Prototype.md) and [Lua details](Tabletop-Scripting.md).

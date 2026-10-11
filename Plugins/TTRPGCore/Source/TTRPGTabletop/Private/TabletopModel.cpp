@@ -73,8 +73,8 @@ FToken* FBoardModel::Selected() { return Tokens.FindByPredicate([this](const FTo
 const FToken* FBoardModel::Selected() const { const FToken* T=Find(SelectedId); return T && IsVisible(*T)?T:nullptr; }
 void FBoardModel::Touch() { ++Revision; }
 bool FBoardModel::IsInside(FIntPoint C) const { return Map().Contains(C); }
-bool FBoardModel::IsVisible(const FToken& T) const { return T.MapId==ActiveMapId && (Role==ERole::DM || (!T.bHidden && IsCellVisible(T.Cell))); }
-bool FBoardModel::CanControl(const FToken& T) const { return IsVisible(T) && (Role==ERole::DM || T.OwnerId==ViewingPlayerId); }
+bool FBoardModel::IsVisible(const FToken& T) const { return T.MapId==ActiveMapId && (IsDM() || (!T.bHidden && IsCellVisible(T.Cell))); }
+bool FBoardModel::CanControl(const FToken& T) const { return IsVisible(T) && (IsDM() || T.OwnerId==ViewingPlayerId); }
 const FToken* FBoardModel::TokenAt(FIntPoint C,bool VisibleOnly) const
 {
     return Tokens.FindByPredicate([&](const FToken& T){return T.MapId==ActiveMapId && T.Cell==C && (!VisibleOnly || IsVisible(T));});
@@ -86,31 +86,36 @@ bool FBoardModel::IsAvailable(FIntPoint C,int32 IgnoreId) const
 void FBoardModel::Log(const FString& Message) { Status=Message; Activity.Insert(Message,0); if(Activity.Num()>6) Activity.SetNum(6); Touch(); }
 void FBoardModel::SetRole(ERole NewRole)
 {
+    if(NewRole!=ERole::DM && NewRole!=ERole::Player) return;
+    if(!IsDMEntry() && NewRole!=ERole::Player) {Status=TEXT("A player session cannot enter DM view."); return;}
     Role=NewRole; Tool=ETool::Select; SelectedId=INDEX_NONE;
+    if(Role==ERole::Player) Workspace=EWorkspace::Gameplay; else if(!bEnteredSession) Workspace=EWorkspace::MapEditor;
     if(Role==ERole::Player && Player()) ActiveMapId=Player()->MapId;
     Touch();
     for(const FToken& T:Tokens) if(IsVisible(T) && T.OwnerId==ViewingPlayerId) { SelectedId=T.Id; break; }
-    Activity.Empty(); Log(Role==ERole::DM?TEXT("DM view: edit maps and assign players independently."):TEXT("Player view: your assigned map and visible characters only."));
+    Activity.Empty(); Log(IsDM()?TEXT("DM view: edit maps and assign players independently."):TEXT("Player view: your assigned map and visible characters only."));
 }
 void FBoardModel::SetPlayer(int32 Id)
 {
+    if(!IsDMEntry() && Id!=EnteredPlayerId) return;
     if(!Players.ContainsByPredicate([Id](const FLocalPlayer& P){return P.Id==Id;})) return;
     ViewingPlayerId=Id; SetRole(Role);
 }
 bool FBoardModel::SwitchMap(int32 Id)
 {
-    if(!FindMap(Id) || (Role!=ERole::DM && (!Player() || Player()->MapId!=Id))) return false;
+    if(!FindMap(Id) || (!IsDM() && (!Player() || Player()->MapId!=Id))) return false;
     ActiveMapId=Id; SelectedId=INDEX_NONE; Tool=ETool::Select; Activity.Empty(); Log(TEXT("Map opened. Player assignments are unchanged.")); return true;
 }
 int32 FBoardModel::AddMap(const FString& Name,int32 Width,int32 Height,EGrid Grid)
 {
-    if(Role!=ERole::DM || Maps.Num()>=16 || Width<4 || Width>64 || Height<4 || Height>64 || Name.TrimStartAndEnd().IsEmpty()) return INDEX_NONE;
+    if(!CanEditMap() || Maps.Num()>=16 || NextMapId>=1000000 || Width<4 || Width>64 || Height<4 || Height>64 || Name.TrimStartAndEnd().IsEmpty()
+        || (Grid!=EGrid::Square && Grid!=EGrid::Hex)) return INDEX_NONE;
     FMapData M; M.Id=NextMapId++; M.Name=Name.Left(80); M.Width=Width; M.Height=Height; M.Grid=Grid;
     Maps.Add(M); SwitchMap(M.Id); return M.Id;
 }
 bool FBoardModel::ResizeMap(int32 Width,int32 Height)
 {
-    if(Role!=ERole::DM || Width<4 || Width>64 || Height<4 || Height>64) return false;
+    if(!CanEditMap() || Width<4 || Width>64 || Height<4 || Height>64) return false;
     auto Fits=[=](FIntPoint C){return C.X<Width && C.Y<Height;};
     for(FIntPoint C:Map().Walls) if(!Fits(C)) {Status=TEXT("Resize would cut off walls. Clear them first."); return false;}
     for(const FMapLight& L:Map().Lights) if(!Fits(L.Cell)) {Status=TEXT("Resize would cut off lights."); return false;}
@@ -121,7 +126,7 @@ bool FBoardModel::AssignPlayer(int32 Id,int32 MapId)
 {
     FLocalPlayer* P=Players.FindByPredicate([Id](const FLocalPlayer& V){return V.Id==Id;});
     const FMapData* Dest=FindMap(MapId);
-    if(Role!=ERole::DM || !P || !Dest) return false;
+    if(!IsDM() || !P || !Dest) return false;
     if(P->MapId==MapId) return true;
     if(FindMap(P->MapId)->bCombat || Dest->bCombat) {Status=TEXT("End combat on both maps before transferring this player."); return false;}
     TArray<int32> Owned;
@@ -133,7 +138,11 @@ bool FBoardModel::AssignPlayer(int32 Id,int32 MapId)
         if(!Dest->Walls.Contains(C) && !Tokens.ContainsByPredicate([&](const FToken& T){return T.MapId==MapId && T.Cell==C;})) Free.Add(C);
     }
     if(Free.Num()<Owned.Num()) {Status=TEXT("Destination has too few open cells. No changes made."); return false;}
-    for(int32 I=0; I<Owned.Num(); ++I) {FToken& T=Tokens[Owned[I]]; T.MapId=MapId; T.Cell=Free[I]; T.MovementSpent=0;}
+    for(int32 I=0; I<Owned.Num(); ++I)
+    {
+        FToken& T=Tokens[Owned[I]]; T.MapId=MapId; T.Cell=Free[I]; T.MovementSpent=0;
+        for(FTabletopScript& Script:Scripts) if(Script.TokenId==T.Id) Script.MapId=MapId;
+    }
     P->MapId=MapId; SelectedId=INDEX_NONE;
     Log(FString::Printf(TEXT("%s assigned to %s."),*P->Name,*Dest->Name)); return true;
 }
@@ -174,6 +183,8 @@ float FBoardModel::RemainingMovement(const FToken& T) const
 }
 bool FBoardModel::Move(int32 Id,FIntPoint Cell)
 {
+    if(bEnteredSession && Role==ERole::Player && Workspace!=EWorkspace::Gameplay)
+    {Status=TEXT("Open Game Play to move tokens."); return false;}
     FToken* T=Tokens.FindByPredicate([Id](const FToken& V){return V.Id==Id;});
     if(!T || !CanControl(*T)) {Status=TEXT("You can only move a token you control on this map."); return false;}
     if(!IsAvailable(Cell,Id) || (Role==ERole::Player && !IsCellVisible(Cell))) {Status=TEXT("That destination is unavailable."); return false;}
@@ -186,56 +197,68 @@ bool FBoardModel::Move(int32 Id,FIntPoint Cell)
         if(Remaining>=0 && Cost>Remaining+.001f) {Status=FString::Printf(TEXT("Movement budget exceeded. %.1f units remain."),Remaining); return false;}
         if(Remaining>=0) T->MovementSpent+=Cost;
     }
-    T->Cell=Cell; Touch(); Log(FString::Printf(TEXT("%s moved to column %d, row %d."),*T->Name,Cell.X+1,Cell.Y+1)); return true;
+    T->Cell=Cell; Touch(); Log(FString::Printf(TEXT("%s moved to column %d, row %d."),*T->Name,Cell.X+1,Cell.Y+1));
+    EmitEvent(TEXT("move"),Id);
+    return true;
 }
 void FBoardModel::ToggleCombat()
 {
-    if(Role!=ERole::DM) return;
+    if(!IsDM()) return;
     auto& M=Map(); M.bCombat=!M.bCombat; M.TurnOrder.Empty(); M.TurnIndex=0; M.Round=1;
     for(FToken& T:Tokens) if(T.MapId==ActiveMapId) {T.MovementSpent=0; if(M.bCombat && T.Kind!=ETokenKind::Prop) M.TurnOrder.Add(T.Id);}
     if(M.TurnOrder.IsEmpty()) M.bCombat=false;
-    Log(M.bCombat?TEXT("Combat started. Turn order follows the roster."):TEXT("Combat ended. Movement allowances reset."));
+    M.TurnOrder.Sort([this](int32 A,int32 B){const FToken* TA=Find(A); const FToken* TB=Find(B); return TA->Initiative==TB->Initiative?A<B:TA->Initiative>TB->Initiative;});
+    AdvanceTurnGeneration();
+    Log(M.bCombat?TEXT("Combat started. Highest initiative acts first."):TEXT("Combat ended. Movement allowances reset."));
+    if(M.bCombat) EmitEvent(TEXT("turn_start"),ActiveTurnId());
 }
 void FBoardModel::NextTurn()
 {
-    if(Role!=ERole::DM || !Map().bCombat || Map().TurnOrder.IsEmpty()) return;
+    if(!IsDM() || !Map().bCombat || Map().TurnOrder.IsEmpty()) return;
     Map().TurnIndex=(Map().TurnIndex+1)%Map().TurnOrder.Num(); if(!Map().TurnIndex) ++Map().Round;
     for(FToken& T:Tokens) if(T.Id==ActiveTurnId()) T.MovementSpent=0;
+    AdvanceTurnGeneration();
     Log(TEXT("Next turn. Active character's movement refreshed."));
+    EmitEvent(TEXT("turn_start"),ActiveTurnId());
 }
 void FBoardModel::ResetMovement()
 {
-    if(Role!=ERole::DM) return;
+    if(!IsDM()) return;
     for(FToken& T:Tokens) if(T.MapId==ActiveMapId) T.MovementSpent=0;
     Log(TEXT("DM refreshed movement allowances on this map."));
 }
 bool FBoardModel::Place(ETokenKind Kind,FIntPoint Cell)
 {
-    if(Role!=ERole::DM || !IsAvailable(Cell) || NextId>=MAX_int32 || Tokens.Num()>=512) return false;
+    if(!CanEditMap() || !IsAvailable(Cell) || NextId>=1000000 || Tokens.Num()>=512
+        || (Kind!=ETokenKind::Hero && Kind!=ETokenKind::NPC && Kind!=ETokenKind::Prop)) return false;
     if(Kind==ETokenKind::Hero && (!Player() || Player()->MapId!=ActiveMapId)) {Status=TEXT("Assign the selected player to this map before placing their character."); return false;}
     FString Name=Kind==ETokenKind::Hero?TEXT("Adventurer"):Kind==ETokenKind::NPC?TEXT("Scout"):TEXT("Crate");
     FToken T; T.Id=NextId++; T.Name=FString::Printf(TEXT("%s %d"),*Name,T.Id); T.Cell=Cell; T.Kind=Kind;
     T.MapId=ActiveMapId; T.OwnerId=Kind==ETokenKind::Hero?ViewingPlayerId:0; T.bOwnedByPlayer=T.OwnerId==1;
-    T.HP=Kind==ETokenKind::Prop?1:20; T.Sheet.MaxHP=T.HP; Tokens.Add(T); SelectedId=T.Id;
+    T.Sheet=TokenDefaults.Sheet; T.Attributes=TokenDefaults.Attributes; T.Bars=TokenDefaults.Bars;
+    T.VisionRange=TokenDefaults.VisionRange; T.VisionAngle=TokenDefaults.VisionAngle; T.bDarkvision=TokenDefaults.bDarkvision;
+    T.HP=Kind==ETokenKind::Prop?1:T.Sheet.MaxHP;
+    if(Kind==ETokenKind::Prop) {T.Sheet.MaxHP=1; T.Bars.Empty();}
+    Tokens.Add(T); SelectedId=T.Id;
     if(Map().bCombat && Kind!=ETokenKind::Prop) Map().TurnOrder.Add(T.Id);
     Log(TEXT("Token placed on the active map.")); return true;
 }
 bool FBoardModel::PaintWall(FIntPoint Cell,bool Add)
 {
-    if(Role!=ERole::DM || !IsInside(Cell) || (Add && (TokenAt(Cell,false) || Map().Lights.ContainsByPredicate([&](const FMapLight& L){return L.Cell==Cell;})))) return false;
+    if(!CanEditMap() || !IsInside(Cell) || (Add && (TokenAt(Cell,false) || Map().Lights.ContainsByPredicate([&](const FMapLight& L){return L.Cell==Cell;})))) return false;
     if(Add) Map().Walls.Add(Cell); else Map().Walls.Remove(Cell);
     Status=Add?TEXT("Wall placed: blocks movement and line of sight."):TEXT("Wall removed."); Touch(); return true;
 }
 bool FBoardModel::PaintStroke(FIntPoint From,FIntPoint To,bool Add)
 {
-    if(Role!=ERole::DM || !IsInside(From) || !IsInside(To)) return false;
+    if(!CanEditMap() || !IsInside(From) || !IsInside(To)) return false;
     FVector2D A=Map().Center(From), B=Map().Center(To); int32 Steps=FMath::Max(1,FMath::CeilToInt((B-A).Size()*3)); bool Changed=false;
     for(int32 I=0; I<=Steps; ++I) Changed|=PaintWall(Map().CellFromPoint(FMath::Lerp(A,B,double(I)/Steps)),Add);
     return Changed;
 }
 bool FBoardModel::PlaceLight(FIntPoint Cell,float Range,bool Remove)
 {
-    if(Role!=ERole::DM || !IsInside(Cell)) return false;
+    if(!CanEditMap() || !IsInside(Cell)) return false;
     if(Remove) Map().Lights.RemoveAll([&](const FMapLight& L){return L.Cell==Cell;});
     else
     {
@@ -247,7 +270,7 @@ bool FBoardModel::PlaceLight(FIntPoint Cell,float Range,bool Remove)
 }
 bool FBoardModel::ToggleHidden()
 {
-    FToken* T=Selected(); if(Role!=ERole::DM || !T) return false; T->bHidden=!T->bHidden; Log(TEXT("Token visibility updated.")); return true;
+    FToken* T=Selected(); if(!IsDM() || !T) return false; T->bHidden=!T->bHidden; Log(TEXT("Token visibility updated.")); return true;
 }
 bool FBoardModel::ChangeHP(int32 Delta)
 {
@@ -311,7 +334,7 @@ void FBoardModel::RefreshVision() const
 }
 bool FBoardModel::IsCellVisible(FIntPoint C) const
 {
-    if(!IsInside(C)) return false; if(Role==ERole::DM) return true;
+    if(!IsInside(C)) return false; if(IsDM()) return true;
     if(!Player() || Player()->MapId!=ActiveMapId) return false; if(!Map().bVision) return true;
     RefreshVision(); return VisibleCells.Contains(C);
 }
