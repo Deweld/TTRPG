@@ -59,15 +59,26 @@ Read [the accepted direction](Docs/Product-Decisions.md),
 ## Current implementation
 
 The plugin includes the original in-memory campaign review model and a playable
-local top-down tabletop prototype. The prototype has multiple square/hex maps,
-individual player assignments, image backgrounds, token vision and wall-blocked
-lights, movement budgets and combat turns, and basic system-neutral sheets.
-Local session save/load preserves these settings and imports the earlier map
-format. See [the prototype guide](Docs/Tabletop-Prototype.md) for launch
-instructions, controls, and current limits.
+local top-down tabletop prototype. Entry selects DM or player; only DM can preview
+a player and return. Map Editor, Game Play, Token Edit and Script workspaces
+separate preparation from play, with a DM layout lock during gameplay.
+
+The prototype has multiple square/hex maps, player assignments, image backgrounds,
+wall-blocked sight/lights, map duplication/deletion, movement budgets, initiative
+and DM-reviewed forced moves. Token defaults and instance attributes support
+system-neutral sheets, conditions and resource bars. Lua macros and map/token
+events run in a bounded local runtime with role-appropriate data and commands.
+Session format v3 preserves these records and imports older saves without running
+saved scripts. Lua source is bundled with its upstream license; there is no
+runtime download or paid service dependency.
+
+See [the prototype guide](Docs/Tabletop-Prototype.md) for launch instructions,
+controls and limits, [the Lua guide](Docs/Tabletop-Scripting.md) for the script API,
+and [validation](Docs/Validation.md) for recorded build/test results.
 
 Networking, Steam, full sheets, campaign persistence, and the offline proposal
-UI remain future work. The local role switch is for testing, not authentication.
+UI remain future work. Local role entry is a workflow boundary, not network
+authentication. Standalone Player entry does not execute DM automatic events.
 
 Work takes place on development branches, with pull requests for review. The
 original `Overview/Outline.txt` is retained; newer accepted decisions are recorded

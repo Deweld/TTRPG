@@ -10,6 +10,36 @@ namespace
 {
 using JObject = TSharedPtr<FJsonObject>;
 using JValues = TArray<TSharedPtr<FJsonValue>>;
+bool UnambiguousObjectKeys(const FString& Json)
+{
+    // The DOM may coalesce duplicate keys. Check the token stream first so a
+    // repeated field or case alias cannot silently replace an earlier value.
+    struct FScope { bool bObject = false; TSet<FString> Keys; };
+    TArray<FScope> Scopes;
+    const auto Reader = TJsonReaderFactory<>::Create(Json);
+    EJsonNotation Notation;
+    while (Reader->ReadNext(Notation))
+    {
+        if (Notation == EJsonNotation::Error) return false;
+        if (Notation == EJsonNotation::ObjectEnd || Notation == EJsonNotation::ArrayEnd)
+        {
+            if (Scopes.IsEmpty()) return false;
+            Scopes.Pop(); continue;
+        }
+        if (!Scopes.IsEmpty() && Scopes.Last().bObject)
+        {
+            const FString Key = Reader->GetIdentifier().ToLower();
+            if (Scopes.Last().Keys.Contains(Key)) return false;
+            Scopes.Last().Keys.Add(Key);
+        }
+        if (Notation == EJsonNotation::ObjectStart || Notation == EJsonNotation::ArrayStart)
+        {
+            if (Scopes.Num() >= 32) return false;
+            FScope Scope; Scope.bObject = Notation == EJsonNotation::ObjectStart; Scopes.Add(MoveTemp(Scope));
+        }
+    }
+    return Scopes.IsEmpty() && Reader->GetErrorMessage().IsEmpty();
+}
 bool Num(const FJsonObject& J, const TCHAR* Key, double Min, double Max, double& Out)
 {
     return J.TryGetNumberField(Key, Out) && FMath::IsFinite(Out) && Out >= Min && Out <= Max;
@@ -46,10 +76,107 @@ bool ReadWalls(const FJsonObject& J, FMapData& M)
     }
     return true;
 }
+bool Identifier(const FString& Name)
+{
+    if (Name.IsEmpty() || Name.Len() > 40) return false;
+    for (int32 I = 0; I < Name.Len(); ++I)
+    {
+        const TCHAR C = Name[I];
+        if (!((C >= 'a' && C <= 'z') || (C >= 'A' && C <= 'Z') || C == '_' || (I > 0 && C >= '0' && C <= '9'))) return false;
+    }
+    return true;
+}
+bool Builtin(const FString& Name)
+{
+    return Name.Equals(TEXT("hp"), ESearchCase::IgnoreCase) || Name.Equals(TEXT("maxHP"), ESearchCase::IgnoreCase)
+        || Name.Equals(TEXT("defense"), ESearchCase::IgnoreCase) || Name.Equals(TEXT("speed"), ESearchCase::IgnoreCase);
+}
+bool ReservedAttribute(const FString& Name)
+{
+    if (Builtin(Name)) return true;
+    const FString Key = Name.ToLower();
+    return Key == TEXT("x") || Key == TEXT("y") || Key == TEXT("id") || Key == TEXT("name")
+        || Key == TEXT("map_id") || Key == TEXT("owner_id") || Key == TEXT("attrs") || Key == TEXT("conditions");
+}
+JObject AttributesObject(const TMap<FString, float>& Attributes)
+{
+    auto J = MakeShared<FJsonObject>();
+    for (const auto& A : Attributes) J->SetNumberField(A.Key, A.Value);
+    return J;
+}
+bool ReadAttributes(const FJsonObject& J, TMap<FString, float>& Attributes)
+{
+    const JObject* O = nullptr;
+    if (!J.TryGetObjectField(TEXT("attributes"), O) || (*O)->Values.Num() > 32) return false;
+    Attributes.Empty();
+    for (const auto& A : (*O)->Values)
+    {
+        const FString Key(A.Key.Len(), *A.Key);
+        double Value = 0;
+        if (!Identifier(Key) || ReservedAttribute(Key) || Attributes.Contains(Key.ToLower()) || !A.Value || !A.Value->TryGetNumber(Value)
+            || !FMath::IsFinite(Value) || FMath::Abs(Value) > 1000000) return false;
+        Attributes.Add(Key.ToLower(), float(Value));
+    }
+    return true;
+}
+JValues BarsArray(const TArray<FStatusBar>& Bars)
+{
+    JValues Values;
+    for (const FStatusBar& Bar : Bars)
+    {
+        auto J = MakeShared<FJsonObject>(); J->SetStringField(TEXT("label"), Bar.Label);
+        J->SetStringField(TEXT("value"), Bar.ValueAttribute); J->SetStringField(TEXT("maximum"), Bar.MaxAttribute);
+        Values.Add(MakeShared<FJsonValueObject>(J));
+    }
+    return Values;
+}
+bool ReadBars(const FJsonObject& J, const TMap<FString, float>& Attributes, TArray<FStatusBar>& Bars)
+{
+    const JValues* Values = nullptr;
+    if (!J.TryGetArrayField(TEXT("bars"), Values) || Values->Num() > 4) return false;
+    Bars.Empty();
+    auto Resolves = [&](const FString& Name) { return Identifier(Name) && (Builtin(Name) || Attributes.Contains(Name.ToLower())); };
+    for (const auto& V : *Values)
+    {
+        const JObject* O = nullptr; FStatusBar Bar;
+        if (!V || !V->TryGetObject(O) || !Text(**O, TEXT("label"), Bar.Label, 40)
+            || !Text(**O, TEXT("value"), Bar.ValueAttribute, 40) || !Resolves(Bar.ValueAttribute)
+            || !Text(**O, TEXT("maximum"), Bar.MaxAttribute, 40) || !Resolves(Bar.MaxAttribute)) return false;
+        Bars.Add(MoveTemp(Bar));
+    }
+    return true;
+}
+void WriteSheet(FJsonObject& J, const FCharacterSheet& Sheet)
+{
+    J.SetNumberField(TEXT("maxHP"), Sheet.MaxHP); J.SetNumberField(TEXT("defense"), Sheet.Defense);
+    J.SetNumberField(TEXT("speed"), Sheet.Speed); J.SetStringField(TEXT("notes"), Sheet.Notes);
+}
+bool ReadSheet(const FJsonObject& J, FCharacterSheet& Sheet)
+{
+    return Int(J, TEXT("maxHP"), 1, 9999, Sheet.MaxHP) && Int(J, TEXT("defense"), 0, 999, Sheet.Defense)
+        && Float(J, TEXT("speed"), 0, 1000, Sheet.Speed) && Text(J, TEXT("notes"), Sheet.Notes, 4096, true);
+}
+bool ReadLinks(const FJsonObject& J, TArray<FMapLink>& Links)
+{
+    const JValues* Values = nullptr;
+    if (!J.TryGetArrayField(TEXT("links"), Values) || Values->Num() > 32) return false;
+    for (const auto& V : *Values)
+    {
+        const JObject* O = nullptr; FMapLink Link;
+        if (!V || !V->TryGetObject(O) || !Text(**O, TEXT("name"), Link.Name, 80)
+            || !Text(**O, TEXT("url"), Link.Url, 2048) || !(*O)->TryGetBoolField(TEXT("playerVisible"), Link.bPlayerVisible)
+            || !(Link.Url.StartsWith(TEXT("https://")) || Link.Url.StartsWith(TEXT("http://")))) return false;
+        for (TCHAR C : Link.Url) if (FChar::IsWhitespace(C) || C < 32 || C == '\\') return false;
+        const FString Host = Link.Url.Mid(Link.Url.Find(TEXT("://")) + 3);
+        if (Host.IsEmpty() || Host.StartsWith(TEXT("/")) || Host.StartsWith(TEXT("?")) || Host.StartsWith(TEXT("#"))) return false;
+        Links.Add(MoveTemp(Link));
+    }
+    return true;
+}
 }
 FString FBoardModel::ToJson() const
 {
-    auto Root = MakeShared<FJsonObject>(); Root->SetNumberField(TEXT("version"), 2);
+    auto Root = MakeShared<FJsonObject>(); Root->SetNumberField(TEXT("version"), 3);
     Root->SetNumberField(TEXT("activeMap"), ActiveMapId); Root->SetNumberField(TEXT("viewingPlayer"), ViewingPlayerId);
     JValues JM, JT, JP;
     for (const FMapData& M : Maps)
@@ -64,12 +191,18 @@ FString FBoardModel::ToJson() const
         J->SetBoolField(TEXT("vision"), M.bVision); J->SetBoolField(TEXT("darkness"), M.bDarkness);
         J->SetBoolField(TEXT("limitMovement"), M.bLimitMovement); J->SetNumberField(TEXT("movementLimit"), M.MovementLimit);
         J->SetBoolField(TEXT("combat"), M.bCombat); J->SetNumberField(TEXT("turnIndex"), M.TurnIndex); J->SetNumberField(TEXT("round"), M.Round);
-        JValues Walls, Lights, Turns;
+        JValues Walls, Lights, Turns, Links;
         for (FIntPoint C : M.Walls) Walls.Add(MakeShared<FJsonValueObject>(CellObject(C)));
         for (const FMapLight& L : M.Lights)
         { auto O = CellObject(L.Cell); O->SetNumberField(TEXT("range"), L.Range); Lights.Add(MakeShared<FJsonValueObject>(O)); }
         for (int32 Id : M.TurnOrder) Turns.Add(MakeShared<FJsonValueNumber>(Id));
+        for (const FMapLink& Link : M.Links)
+        {
+            auto O = MakeShared<FJsonObject>(); O->SetStringField(TEXT("name"), Link.Name); O->SetStringField(TEXT("url"), Link.Url);
+            O->SetBoolField(TEXT("playerVisible"), Link.bPlayerVisible); Links.Add(MakeShared<FJsonValueObject>(O));
+        }
         J->SetArrayField(TEXT("walls"), Walls); J->SetArrayField(TEXT("lights"), Lights); J->SetArrayField(TEXT("turnOrder"), Turns);
+        J->SetArrayField(TEXT("links"), Links);
         JM.Add(MakeShared<FJsonValueObject>(J));
     }
     for (const FLocalPlayer& P : Players)
@@ -87,18 +220,37 @@ FString FBoardModel::ToJson() const
         J->SetNumberField(TEXT("visionRange"), T.VisionRange); J->SetNumberField(TEXT("visionAngle"), T.VisionAngle);
         J->SetNumberField(TEXT("facing"), T.Facing); J->SetBoolField(TEXT("darkvision"), T.bDarkvision);
         J->SetBoolField(TEXT("outOfTurn"), T.bOutOfTurn); J->SetNumberField(TEXT("spent"), T.MovementSpent);
+        J->SetObjectField(TEXT("attributes"), AttributesObject(T.Attributes)); J->SetArrayField(TEXT("bars"), BarsArray(T.Bars));
+        J->SetNumberField(TEXT("initiative"), T.Initiative);
+        JValues Conditions; for (const FString& C : T.Conditions) Conditions.Add(MakeShared<FJsonValueString>(C));
+        J->SetArrayField(TEXT("conditions"), Conditions);
         JT.Add(MakeShared<FJsonValueObject>(J));
     }
     Root->SetArrayField(TEXT("maps"), JM); Root->SetArrayField(TEXT("players"), JP); Root->SetArrayField(TEXT("tokens"), JT);
+    auto Defaults = MakeShared<FJsonObject>(); WriteSheet(*Defaults, TokenDefaults.Sheet);
+    Defaults->SetObjectField(TEXT("attributes"), AttributesObject(TokenDefaults.Attributes)); Defaults->SetArrayField(TEXT("bars"), BarsArray(TokenDefaults.Bars));
+    Defaults->SetNumberField(TEXT("visionRange"), TokenDefaults.VisionRange); Defaults->SetNumberField(TEXT("visionAngle"), TokenDefaults.VisionAngle);
+    Defaults->SetBoolField(TEXT("darkvision"), TokenDefaults.bDarkvision); Root->SetObjectField(TEXT("tokenDefaults"), Defaults);
+    JValues ScriptValues;
+    for (const FTabletopScript& Script : Scripts)
+    {
+        auto J = MakeShared<FJsonObject>(); J->SetNumberField(TEXT("id"), Script.Id); J->SetStringField(TEXT("name"), Script.Name);
+        J->SetStringField(TEXT("source"), Script.Source); J->SetNumberField(TEXT("owner"), Script.OwnerId);
+        J->SetBoolField(TEXT("playerCallable"), Script.bPlayerCallable); J->SetNumberField(TEXT("map"), Script.MapId);
+        J->SetNumberField(TEXT("token"), Script.TokenId); J->SetStringField(TEXT("event"), Script.Event);
+        J->SetBoolField(TEXT("enabled"), Script.bEnabled); J->SetStringField(TEXT("condition"), Script.Condition);
+        ScriptValues.Add(MakeShared<FJsonValueObject>(J));
+    }
+    Root->SetArrayField(TEXT("scripts"), ScriptValues);
     FString Json; FJsonSerializer::Serialize(Root, TJsonWriterFactory<>::Create(&Json)); return Json;
 }
 bool FBoardModel::LoadJson(const FString& Json)
 {
     auto Fail = [this]() { Status = TEXT("Save rejected: invalid data. Your current maps were preserved."); return false; };
-    if (Role != ERole::DM || Json.Len() > 4 * 1024 * 1024) return Fail();
+    if (!IsDM() || Json.Len() > 4 * 1024 * 1024 || !UnambiguousObjectKeys(Json)) return Fail();
     JObject Root; int32 Version=0;
-    if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json), Root) || !Root || !Int(*Root, TEXT("version"), 1, 2, Version)) return Fail();
-    FBoardModel Candidate; Candidate.Maps.Empty(); Candidate.Tokens.Empty(); Candidate.NextId = 1; Candidate.NextMapId = 1;
+    if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json), Root) || !Root || !Int(*Root, TEXT("version"), 1, 3, Version)) return Fail();
+    FBoardModel Candidate; Candidate.Maps.Empty(); Candidate.Tokens.Empty(); Candidate.Scripts.Empty(); Candidate.NextId = 1; Candidate.NextMapId = 1;
     const JValues* JT=nullptr;
     if (!Root->TryGetArrayField(TEXT("tokens"), JT) || JT->Num() > 512) return Fail();
     if (Version == 1)
@@ -124,6 +276,7 @@ bool FBoardModel::LoadJson(const FString& Json)
                 || !(*J)->TryGetBoolField(TEXT("limitMovement"), M.bLimitMovement) || !Float(**J, TEXT("movementLimit"), 0, 1000, M.MovementLimit)
                 || !(*J)->TryGetBoolField(TEXT("combat"), M.bCombat) || !Int(**J, TEXT("turnIndex"), 0, 511, M.TurnIndex)
                 || !Int(**J, TEXT("round"), 1, 1000000, M.Round) || !ReadWalls(**J, M)) return Fail();
+            if (Version >= 3 && !ReadLinks(**J, M.Links)) return Fail();
             M.Grid = EGrid(Grid);
             const JValues *JL=nullptr, *JO=nullptr;
             if (!(*J)->TryGetArrayField(TEXT("lights"), JL) || JL->Num() > 32 || !(*J)->TryGetArrayField(TEXT("turnOrder"), JO) || JO->Num() > 512) return Fail();
@@ -175,6 +328,21 @@ bool FBoardModel::LoadJson(const FString& Json)
             || !Float(**J, TEXT("visionRange"), 0, 500, T.VisionRange) || !Float(**J, TEXT("visionAngle"), 1, 360, T.VisionAngle)
             || !Float(**J, TEXT("facing"), 0, 360, T.Facing) || !(*J)->TryGetBoolField(TEXT("darkvision"), T.bDarkvision)
             || !(*J)->TryGetBoolField(TEXT("outOfTurn"), T.bOutOfTurn) || !Float(**J, TEXT("spent"), 0, 1000, T.MovementSpent)) return Fail();
+        if (Version >= 3)
+        {
+            const JValues* Conditions = nullptr;
+            if (!ReadAttributes(**J, T.Attributes) || !ReadBars(**J, T.Attributes, T.Bars)
+                || !Float(**J, TEXT("initiative"), -1000, 1000, T.Initiative)
+                || !(*J)->TryGetArrayField(TEXT("conditions"), Conditions) || Conditions->Num() > 16) return Fail();
+            TSet<FString> Names;
+            for (const auto& C : *Conditions)
+            {
+                FString Name;
+                if (!C || !C->TryGetString(Name) || Name.Len() > 60 || Name.TrimStartAndEnd().IsEmpty()
+                    || Names.Contains(Name.TrimStartAndEnd().ToLower())) return Fail();
+                Name.TrimStartAndEndInline(); Names.Add(Name.ToLower()); T.Conditions.Add(MoveTemp(Name));
+            }
+        }
         const FMapData* M = Candidate.FindMap(T.MapId);
         if (!M || !Cell(**J, *M, T.Cell) || M->Walls.Contains(T.Cell) || Occupied.FindOrAdd(T.MapId).Contains(T.Cell) || T.HP > T.Sheet.MaxHP) return Fail();
         if (T.OwnerId && !Candidate.Players.ContainsByPredicate([&](const FLocalPlayer& P) { return P.Id == T.OwnerId && P.MapId == T.MapId; })) return Fail();
@@ -187,9 +355,43 @@ bool FBoardModel::LoadJson(const FString& Json)
         for (int32 Id : M.TurnOrder) { const FToken* T = Candidate.Find(Id); if (!T || T->MapId != M.Id || T->Kind == ETokenKind::Prop) return Fail(); }
         if (M.bCombat) for (const FToken& T : Candidate.Tokens) if (T.MapId == M.Id && T.Kind != ETokenKind::Prop && !M.TurnOrder.Contains(T.Id)) return Fail();
     }
+    if (Version >= 3)
+    {
+        const JObject* D = nullptr; const JValues* ScriptValues = nullptr;
+        FTokenDefaults& Defaults = Candidate.TokenDefaults;
+        if (!Root->TryGetObjectField(TEXT("tokenDefaults"), D) || !ReadSheet(**D, Defaults.Sheet)
+            || !ReadAttributes(**D, Defaults.Attributes) || !ReadBars(**D, Defaults.Attributes, Defaults.Bars)
+            || !Float(**D, TEXT("visionRange"), 0, 500, Defaults.VisionRange) || !Float(**D, TEXT("visionAngle"), 1, 360, Defaults.VisionAngle)
+            || !(*D)->TryGetBoolField(TEXT("darkvision"), Defaults.bDarkvision)
+            || !Root->TryGetArrayField(TEXT("scripts"), ScriptValues) || ScriptValues->Num() > 64) return Fail();
+        TSet<int32> ScriptIds;
+        for (const auto& V : *ScriptValues)
+        {
+            const JObject* J = nullptr; FTabletopScript Script;
+            if (!V || !V->TryGetObject(J) || !Int(**J, TEXT("id"), 1, 1000000, Script.Id) || ScriptIds.Contains(Script.Id)
+                || !Text(**J, TEXT("name"), Script.Name, 80) || !Text(**J, TEXT("source"), Script.Source, 16384, true)
+                || FTCHARToUTF8(*Script.Source).Length() > 16384
+                || !Int(**J, TEXT("owner"), 0, 1000000, Script.OwnerId) || !(*J)->TryGetBoolField(TEXT("playerCallable"), Script.bPlayerCallable)
+                || !Int(**J, TEXT("map"), 1, 1000000, Script.MapId) || !Candidate.FindMap(Script.MapId)
+                || !Int(**J, TEXT("token"), 0, 1000000, Script.TokenId) || !Text(**J, TEXT("event"), Script.Event, 32)
+                || !(*J)->TryGetBoolField(TEXT("enabled"), Script.bEnabled) || !Text(**J, TEXT("condition"), Script.Condition, 64, true)) return Fail();
+            if (Script.Event != TEXT("manual") && Script.Event != TEXT("move") && Script.Event != TEXT("turn_start") && Script.Event != TEXT("condition_added")) return Fail();
+            const FToken* ScopedToken = Script.TokenId ? Candidate.Find(Script.TokenId) : nullptr;
+            if (Script.TokenId && (!ScopedToken || ScopedToken->MapId != Script.MapId)) return Fail();
+            if (Script.OwnerId && (Script.Event != TEXT("manual")
+                || !Candidate.Players.ContainsByPredicate([&](const FLocalPlayer& P) { return P.Id == Script.OwnerId; })
+                || (ScopedToken && ScopedToken->OwnerId != Script.OwnerId))) return Fail();
+            ScriptIds.Add(Script.Id); Candidate.Scripts.Add(MoveTemp(Script));
+        }
+    }
     Maps = MoveTemp(Candidate.Maps); Players = MoveTemp(Candidate.Players); Tokens = MoveTemp(Candidate.Tokens);
+    TokenDefaults = MoveTemp(Candidate.TokenDefaults); Scripts = MoveTemp(Candidate.Scripts);
     ActiveMapId = Candidate.ActiveMapId; ViewingPlayerId = Candidate.ViewingPlayerId; NextId = Candidate.NextId; NextMapId = Candidate.NextMapId;
+    // Files carry campaign state only. Entry authority, current role/workspace, and callbacks stay in this session.
+    // Proposals and event logs refer to the previous live board and must never be replayed after loading.
+    ForcedMoves.Empty(); MapTurnGenerations.Empty(); ++TurnGeneration; TriggerLog.Empty();
     SelectedId = INDEX_NONE; Tool = ETool::Select; Activity.Empty();
-    Log(Version == 1 ? TEXT("Legacy map imported. Save session to keep the new format.") : TEXT("Maps, assignments, sheets, and combat state restored.")); return true;
+    Log(Version < 3 ? TEXT("Legacy session imported. Save to keep maps, token defaults, and scripts in format v3.")
+        : TEXT("Maps, sheets, defaults, scripts, and combat state restored. Pending approvals cleared.")); return true;
 }
 }

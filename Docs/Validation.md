@@ -74,3 +74,41 @@ Remaining verification: packaged builds, hardware/performance limits, networked
 permissions and replication, cross-machine asset transfer, and the complete
 Milestone 1 two-instance workflow. Lighting here is discrete cell visibility,
 not Unreal scene lighting or 3D/VR rendering.
+
+## Workspaces, token properties, and Lua
+
+Verified October 11, 2026 with UE 5.8.3 / Win64 Development editor:
+
+- The connected host and plugin built successfully with MSVC 14.44.35229.
+- All 37 automation tests passed, with zero failures and zero skipped tests:
+  8 campaign review tests and 29 tabletop tests. New coverage includes fixed
+  entry authority, editor locks, map lifecycle, defaults and instance attributes,
+  status bars, initiative, stale/replayed forced-move decisions, script ownership,
+  atomic commands, immutable condition-event payloads, bounded script IDs,
+  restricted snapshots, Lua quotas, and v3 persistence/migration.
+- Final local report:
+  `Saved/TTRPGAutomation/c3ccfd8081f74868843c7896949e625c/index.json`.
+- Live native checks verified the entry screen, player-only controls, DM player
+  preview and return, locked gameplay controls, readable inspector tabs, map
+  duplication without copying player characters, token roster/custom attributes,
+  and the dedicated script editor with starter actions and reference text.
+- A player-owned one-line Lua macro added Prone to its token and appeared in the
+  gameplay macro list. A player-preview drag of another character created a
+  pending request without moving it; DM approval then moved the character while
+  preserving its movement allowance.
+- Initial testing exposed duplicate JSON keys collapsing before validation and
+  a Lua quota error crossing an MSVC C++ cleanup frame. Both were corrected and
+  their regression checks pass. Error-capable Lua callbacks keep C++ temporary
+  handling in separate non-inlined helpers. Native library loops also have bounds
+  because Lua VM instruction hooks do not run inside ordinary C library loops.
+- The owner's running editor layout was saved and backed up before restart.
+  The session save remains byte-identical to that backup after UI testing;
+  temporary test changes were not written to the campaign save. Personal data,
+  generated reports, build output and crash diagnostics remain local/untracked.
+
+This validates the local prototype. Standalone Player entry uses sample state;
+DM entry restores the local saved session. Authenticated multiplayer, offline
+proposal integration, packaged builds, a separate-process script security
+boundary, ruleset-specific condition effects, and 3D/VR remain unverified or
+unimplemented. Map deletion and invalid approvals were exercised by automation;
+the live UI checks did not delete the owner's maps.

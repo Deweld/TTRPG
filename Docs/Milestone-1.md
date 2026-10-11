@@ -50,3 +50,18 @@ limits and a basic combat tracker, and system-neutral character sheets. Version 
 local sessions preserve these settings and import the original layout save.
 These features are available for local preview; the two-instance acceptance
 scenario and offline review integration remain outstanding.
+
+The October 11 overhaul organizes the same local prototype into entry roles and
+four workspaces: Map Editor, Game Play, Token Edit and Script. It adds map
+lifecycle controls, an edit lock, initiative ordering, reviewed forced movement,
+instance attributes/conditions/status bars, token defaults, links and bounded
+Lua macros/events. Local format v3 persists these records and migrates v1/v2
+without executing scripts. Entry authority is not restored from saved content,
+and pending local movement approvals clear on load.
+
+The prototype's forced-movement queue is separate from offline sheet submissions.
+It has no durable decision ledger or authenticated transport. Likewise, the Lua
+runtime accepts a role-filtered local context; it does not supply session
+identity. The two-instance acceptance scenario and its outstanding checklist
+remain unchanged. See [prototype controls](Tabletop-Prototype.md),
+[scripting](Tabletop-Scripting.md) and [recorded validation](Validation.md).

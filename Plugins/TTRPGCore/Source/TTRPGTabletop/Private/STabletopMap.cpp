@@ -52,7 +52,7 @@ bool STabletopMap::LoadBackground()
 }
 bool STabletopMap::ImportBackground(const FString& Input)
 {
-    if(Model->Role!=ERole::DM) return false;
+    if(!Model->CanEditMap()) return false;
     const FString Path=Input.TrimStartAndEnd().TrimQuotes();
     UTexture2D* Texture=Decode(Path);
     if(!Texture) {Model->Status=TEXT("Import needs a PNG/JPEG up to 32 MB and 16 megapixels (max side 8192)."); return false;}
@@ -145,6 +145,20 @@ int32 STabletopMap::OnPaint(const FPaintArgs&,const FGeometry& G,const FSlateRec
             Box(P+FVector2D((S-W)*.5,S-3),FVector2D(W,16),FLinearColor(.02f,.03f,.04f,.94f),12,&Square);
             Text(P+FVector2D((S-W)*.5+5,S-3),Name,8,FLinearColor(.85f,.88f,.87f),13);
         }
+        if(S>=24)
+        {
+            int32 BarIndex=0;
+            for(const auto& B:T.Bars)
+            {
+                float Value=0,Maximum=0;
+                if(!Model->GetAttribute(T.Id,B.ValueAttribute,Value) || !Model->GetAttribute(T.Id,B.MaxAttribute,Maximum))continue;
+                FVector2D Start=P+FVector2D(S*.06,-3-BarIndex*5);
+                Box(Start,FVector2D(S*.88,4),FLinearColor(.01f,.02f,.03f),15);
+                Box(Start,FVector2D(S*.88*(Maximum>0?FMath::Clamp(Value/Maximum,0.f,1.f):0),3),BarIndex?FLinearColor(.3f,.5f,.9f):FLinearColor(.2f,.8f,.4f),16);
+                ++BarIndex;
+            }
+            if(T.Conditions.Num())Text(P+FVector2D(S*.76,S*.02),FString::Printf(TEXT("!%d"),T.Conditions.Num()),9,FLinearColor(1,.8f,.2f),16);
+        }
         if(T.Id==Model->SelectedId && T.Kind!=ETokenKind::Prop)
         {
             FVector2D Center=O+M.Center(T.Cell)*S; float A=FMath::DegreesToRadians(T.Facing);
@@ -153,7 +167,7 @@ int32 STabletopMap::OnPaint(const FPaintArgs&,const FGeometry& G,const FSlateRec
         }
     }
     if(DragId!=INDEX_NONE && Model->IsInside(Hover) && Model->IsCellVisible(Hover)) Polygon(Points(Hover,3),FLinearColor(.2f,.8f,.65f,.4f),15);
-    return Layer+16;
+    return Layer+18;
 }
 void STabletopMap::ApplyTool(FIntPoint Cell)
 {
@@ -184,10 +198,14 @@ FReply STabletopMap::OnMouseButtonDown(const FGeometry& G, const FPointerEvent& 
     else if (const FToken* T = Model->TokenAt(Hover))
     {
         const int32 Id = T->Id;
-        DragId = Model->CanControl(*T) ? Id : INDEX_NONE;
+        DragId = (Model->CanControl(*T) || Model->CanRequestForcedMove(*T)) ? Id : INDEX_NONE;
         Model->Select(Id);
     }
-    else if (Model->SelectedId != INDEX_NONE) Model->Move(Model->SelectedId, Hover);
+    else if (const FToken* SelectedToken=Model->Selected())
+    {
+        if(Model->CanControl(*SelectedToken)) Model->Move(SelectedToken->Id,Hover);
+        else if(Model->CanRequestForcedMove(*SelectedToken)) Model->RequestForcedMove(SelectedToken->Id,Hover);
+    }
     Changed.ExecuteIfBound();
     return FReply::Handled().CaptureMouse(SharedThis(this)).SetUserFocus(SharedThis(this));
 }
@@ -213,7 +231,11 @@ FReply STabletopMap::OnMouseButtonUp(const FGeometry& G, const FPointerEvent& E)
     if (!HasMouseCapture()) return FReply::Unhandled();
     const FVector2D P = G.AbsoluteToLocal(E.GetScreenSpacePosition());
     if (E.GetEffectingButton() == EKeys::LeftMouseButton && DragId != INDEX_NONE && (P - PressPointer).Size() > 4)
-        Model->Move(DragId, CellAt(G, P));
+    {
+        const FToken* T=Model->Find(DragId);
+        if(T && Model->CanControl(*T)) Model->Move(DragId,CellAt(G,P));
+        else if(T && Model->CanRequestForcedMove(*T)) Model->RequestForcedMove(DragId,CellAt(G,P));
+    }
     DragId = INDEX_NONE; bPanning = false; bPainting = false;
     Changed.ExecuteIfBound();
     return FReply::Handled().ReleaseMouseCapture();
